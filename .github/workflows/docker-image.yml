@@ -1,5 +1,6 @@
 name: Build and push server images
 
+# يعمل تلقائيًا في كل مرة ترفع فيها تعديلات إلى main
 on:
   push:
     branches: [main]
@@ -23,7 +24,7 @@ jobs:
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/xray-server:latest
 
-  build-ssh:
+  build-ssh-shared:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -37,6 +38,6 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@v5
         with:
-          context: ./docker/ssh
+          context: ./docker/ssh-shared
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/ssh-server:latest
+          tags: ghcr.io/${{ github.repository_owner }}/ssh-shared-server:latest
