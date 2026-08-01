@@ -5,6 +5,7 @@ const cron = require("node-cron");
 
 const { RailwayClient } = require("./lib/railway");
 const { CloudflareClient } = require("./lib/cloudflare");
+const { SshManagerClient } = require("./lib/sshManager");
 const db = require("./lib/db");
 
 // ---- Config from environment ----
@@ -19,6 +20,15 @@ const {
   CLOUDFLARE_ZONE_ID, // optional
   CLOUDFLARE_ROOT_DOMAIN, // optional, e.g. "mydomain.com"
   SERVER_TTL_DAYS = "30",
+
+  // --- Shared SSH server (docker/ssh-shared) ---
+  // One persistent Railway service handles ALL SSH users, instead of
+  // creating a new service per user. Avoids hitting Railway's
+  // free-plan resource/service-count limits.
+  SSH_SHARED_INTERNAL_HOST, // e.g. ssh-shared.railway.internal
+  SSH_API_SECRET, // must match API_SECRET set on that service
+  SSH_PUBLIC_HOST, // the TCP proxy domain Railway gave that service
+  SSH_PUBLIC_PORT, // the TCP proxy port Railway gave that service
 } = process.env;
 
 if (!BOT_TOKEN) throw new Error("BOT_TOKEN is required in .env");
@@ -37,6 +47,11 @@ const railway = new RailwayClient(
 const cloudflare =
   CLOUDFLARE_API_TOKEN && CLOUDFLARE_ZONE_ID
     ? new CloudflareClient(CLOUDFLARE_API_TOKEN, CLOUDFLARE_ZONE_ID)
+    : null;
+
+const sshManager =
+  SSH_SHARED_INTERNAL_HOST && SSH_API_SECRET
+    ? new SshManagerClient(SSH_SHARED_INTERNAL_HOST, SSH_API_SECRET)
     : null;
 
 const bot = new Telegraf(BOT_TOKEN);
@@ -110,34 +125,30 @@ async function provisionXrayServer(telegramUserId, protocol) {
 }
 
 async function provisionSshServer(telegramUserId) {
-  if (!SSH_IMAGE) {
-    throw new Error("SSH_IMAGE is not set - build & push docker/ssh first");
+  if (!sshManager) {
+    throw new Error(
+      "Shared SSH server not configured - set SSH_SHARED_INTERNAL_HOST, " +
+        "SSH_API_SECRET, SSH_PUBLIC_HOST, SSH_PUBLIC_PORT"
+    );
+  }
+  if (!SSH_PUBLIC_HOST || !SSH_PUBLIC_PORT) {
+    throw new Error("SSH_PUBLIC_HOST and SSH_PUBLIC_PORT are required");
   }
 
   const id = shortId();
+  // Alphanumeric only - the management API rejects anything else
   const username = `u${id}`;
-  const password = randomBytes(6).toString("base64url");
-  const serviceName = `ssh-${id}`;
+  const password = randomBytes(9).toString("base64url").replace(/[^a-zA-Z0-9]/g, "");
 
-  const service = await railway.createServiceFromImage(serviceName, SSH_IMAGE);
-
-  await railway.setVariables(service.id, {
-    SSH_USERNAME: username,
-    SSH_PASSWORD: password,
-  });
-
-  await railway.deployService(service.id);
-
-  // SSH needs raw TCP, not HTTP - use Railway's TCP proxy
-  const { domain, proxyPort } = await railway.createTcpProxy(service.id, 22);
+  await sshManager.createUser(username, password);
 
   const record = {
     id,
     telegramUserId,
     protocol: "ssh",
-    serviceId: service.id,
-    domain,
-    port: proxyPort,
+    // no serviceId - this user lives on the shared server, not its own service
+    domain: SSH_PUBLIC_HOST,
+    port: SSH_PUBLIC_PORT,
     username,
     password,
     createdAt: new Date().toISOString(),
@@ -251,7 +262,11 @@ cron.schedule("0 3 * * *", async () => {
   const expired = db.getExpiredServers();
   for (const server of expired) {
     try {
-      await railway.deleteService(server.serviceId);
+      if (server.protocol === "ssh") {
+        if (sshManager) await sshManager.deleteUser(server.username);
+      } else {
+        await railway.deleteService(server.serviceId);
+      }
       db.removeServer(server.id);
       console.log(`Deleted expired server ${server.id}`);
     } catch (err) {
