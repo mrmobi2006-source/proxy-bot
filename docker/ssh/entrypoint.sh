@@ -7,11 +7,16 @@ SSH_PASS="${SSH_PASSWORD:?SSH_PASSWORD env var required}"
 id -u "$SSH_USER" &>/dev/null || adduser -D -s /bin/bash "$SSH_USER"
 echo "${SSH_USER}:${SSH_PASS}" | chpasswd
 
-# Harden a bit: only allow this one user, no root login
 cat >> /etc/ssh/sshd_config <<EOF
 PermitRootLogin no
 AllowUsers ${SSH_USER}
 PasswordAuthentication yes
+AllowTcpForwarding yes
+PermitTunnel yes
+GatewayPorts no
+UseDNS no
+ClientAliveInterval 60
+ClientAliveCountMax 3
 EOF
 
 echo "Starting sshd for user ${SSH_USER}"
