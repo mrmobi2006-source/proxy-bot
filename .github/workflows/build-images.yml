@@ -1,12 +1,11 @@
 name: Build and push server images
 
-# يعمل تلقائيًا في كل مرة ترفع فيها تعديلات إلى main
 on:
   push:
     branches: [main]
 
 jobs:
-  build-xray:
+  build-xray-shared:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -20,9 +19,9 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@v5
         with:
-          context: ./docker/xray
+          context: ./docker/xray-shared
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/xray-server:latest
+          tags: ghcr.io/${{ github.repository_owner }}/xray-shared-server:latest
 
   build-ssh-shared:
     runs-on: ubuntu-latest
