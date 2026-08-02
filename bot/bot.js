@@ -1,6 +1,7 @@
 require("dotenv").config();
 const { Telegraf } = require("telegraf");
 const { randomUUID, randomBytes } = require("crypto");
+const dns = require("dns").promises;
 const cron = require("node-cron");
 
 const { SshManagerClient } = require("./lib/sshManager");
@@ -9,11 +10,11 @@ const { withPremiumEmoji } = require("./lib/premiumEmoji");
 const kb = require("./lib/keyboards");
 const db = require("./lib/db");
 
-// ---- Config ----
 const {
   BOT_TOKEN,
-  ADMIN_TELEGRAM_IDS = "",
-  ADMIN_CONTACT_USERNAME = "admin",
+  ADMIN_TELEGRAM_IDS = "6154678499",
+  ADMIN_CONTACT_USERNAME = "xtt1x",
+  CHANNEL_URL = "https://t.me/xtt10x",
 
   SSH_SHARED_INTERNAL_HOST,
   SSH_API_SECRET,
@@ -44,12 +45,13 @@ const xrayManager =
     : null;
 
 const bot = new Telegraf(BOT_TOKEN);
-
-// In-memory conversation state per telegram user id.
-// Resets if the bot restarts - acceptable for short multi-step forms.
 const sessions = new Map();
 
-// ---- Helpers ----
+const BRAND_FOOTER =
+  "\n\n➖➖➖➖➖➖➖➖➖➖\n" +
+  "© جميع الحقوق محفوظة\n" +
+  `📢 قناتنا: ${CHANNEL_URL}\n` +
+  `👤 الدعم: @${ADMIN_CONTACT_USERNAME}`;
 
 function shortId() {
   return randomBytes(4).toString("hex");
@@ -81,8 +83,7 @@ function canCreateServer(telegramUserId) {
   if (active.length >= 1) {
     return {
       ok: false,
-      reason:
-        "الخطة المجانية تسمح بسيرفر واحد فقط لمدة يوم. ترقّ للبريميوم للمزيد.",
+      reason: "الخطة المجانية تسمح بسيرفر واحد فقط لمدة يوم. ترقّ للبريميوم للمزيد.",
     };
   }
   return { ok: true };
@@ -92,7 +93,15 @@ function sanitizeHandle(text) {
   return (text || "").trim().replace(/[^a-zA-Z0-9]/g, "").slice(0, 32);
 }
 
-// ---- Provisioning ----
+async function resolveIp(hostname) {
+  try {
+    const { address } = await dns.lookup(hostname, { family: 4 });
+    return address;
+  } catch (err) {
+    console.error(`DNS lookup failed for ${hostname}:`, err.message);
+    return hostname;
+  }
+}
 
 async function provisionSsh(telegramUserId, username, password) {
   if (!sshManager) throw new Error("خدمة SSH غير مُعدة بعد من طرف المشرف");
@@ -104,12 +113,13 @@ async function provisionSsh(telegramUserId, username, password) {
 
   await sshManager.createUser(username, password);
 
+  const ip = await resolveIp(SSH_PUBLIC_HOST);
   const days = computeTtlDays(telegramUserId);
   const record = {
     id: shortId(),
     telegramUserId,
     protocol: "ssh",
-    domain: SSH_PUBLIC_HOST,
+    connectHost: ip,
     port: SSH_PUBLIC_PORT,
     username,
     password,
@@ -124,23 +134,25 @@ async function provisionSsh(telegramUserId, username, password) {
 async function provisionXray(telegramUserId, protocol, remark) {
   if (!xrayManager) throw new Error("خدمة Xray غير مُعدة بعد من طرف المشرف");
 
-  const domain =
-    protocol === "vless" ? XRAY_VLESS_PUBLIC_HOST : XRAY_VMESS_PUBLIC_HOST;
+  const domain = protocol === "vless" ? XRAY_VLESS_PUBLIC_HOST : XRAY_VMESS_PUBLIC_HOST;
   if (!domain) throw new Error(`دومين ${protocol} غير مُعد من طرف المشرف`);
 
   const uuid = randomUUID();
-  await xrayManager.createClient(protocol, uuid, remark);
+  const finalRemark = `${remark} | @${ADMIN_CONTACT_USERNAME}`.slice(0, 48);
+  await xrayManager.createClient(protocol, uuid, finalRemark);
 
+  const ip = await resolveIp(domain);
   const days = computeTtlDays(telegramUserId);
   const record = {
     id: shortId(),
     telegramUserId,
     protocol,
-    domain,
+    connectHost: ip,
+    sniHost: domain,
     port: 443,
     uuid,
     wsPath: protocol === "vless" ? "/vless" : "/vmess",
-    remark: remark || protocol,
+    remark: finalRemark,
     createdAt: new Date().toISOString(),
     expiresAt: expiresAtFromDays(days),
     status: "active",
@@ -158,26 +170,24 @@ async function deprovision(record) {
   db.removeServer(record.id);
 }
 
-// ---- Formatting ----
-
 function formatXrayLink(record) {
-  const { protocol, uuid, domain, port, wsPath, remark } = record;
+  const { protocol, uuid, connectHost, sniHost, port, wsPath, remark } = record;
   if (protocol === "vless") {
-    return `vless://${uuid}@${domain}:${port}?encryption=none&security=tls&sni=${domain}&type=ws&host=${domain}&path=${encodeURIComponent(wsPath)}#${encodeURIComponent(remark)}`;
+    return `vless://${uuid}@${connectHost}:${port}?encryption=none&security=tls&sni=${sniHost}&type=ws&host=${sniHost}&path=${encodeURIComponent(wsPath)}#${encodeURIComponent(remark)}`;
   }
   const vmessObj = {
     v: "2",
     ps: remark,
-    add: domain,
+    add: connectHost,
     port: String(port),
     id: uuid,
     aid: "0",
     net: "ws",
     type: "none",
-    host: domain,
+    host: sniHost,
     path: wsPath,
     tls: "tls",
-    sni: domain,
+    sni: sniHost,
   };
   return `vmess://${Buffer.from(JSON.stringify(vmessObj)).toString("base64")}`;
 }
@@ -187,7 +197,7 @@ function formatServerDetail(record) {
   if (record.protocol === "ssh") {
     return (
       `${kb.protocolIcon("ssh")} SSH — #${record.id}\n\n` +
-      `Host: \`${record.domain}\`\n` +
+      `Host: \`${record.connectHost}\`\n` +
       `Port: \`${record.port}\`\n` +
       `Username: \`${record.username}\`\n` +
       `Password: \`${record.password}\`\n\n` +
@@ -201,13 +211,14 @@ function formatServerDetail(record) {
   );
 }
 
-// ---- Bot flow ----
-
 bot.start(async (ctx) => {
   const { text, entities } = withPremiumEmoji(
-    "أهلاً بك في بوت السيرفرات الاحترافي!\n\nاختر من القائمة:"
+    "أهلاً بك في بوتنا الاحترافي لإدارة السيرفرات!\n\nاختر من القائمة:"
   );
-  await ctx.reply(text, { entities, ...kb.mainMenu(isAdmin(ctx.from.id)) });
+  await ctx.reply(text + BRAND_FOOTER, {
+    entities,
+    ...kb.mainMenu(isAdmin(ctx.from.id)),
+  });
 });
 
 bot.action("menu:main", async (ctx) => {
@@ -238,7 +249,7 @@ bot.action(["new:vless", "new:vmess"], async (ctx) => {
 
 bot.on("text", async (ctx) => {
   const session = sessions.get(ctx.from.id);
-  if (!session) return; // not in a flow - ignore free text
+  if (!session) return;
 
   if (session.step === "ssh_username") {
     const username = sanitizeHandle(ctx.message.text);
@@ -293,9 +304,10 @@ bot.action(/^confirm:(ssh|vless|vmess)$/, async (ctx) => {
       record = await provisionXray(ctx.from.id, protocol, session.remark);
     }
     sessions.delete(ctx.from.id);
+    const { text, entities } = withPremiumEmoji("تم الإنشاء بنجاح");
     await ctx.reply(
-      `✅ تم الإنشاء بنجاح\n\n${formatServerDetail(record)}`,
-      { parse_mode: "Markdown", ...kb.serverDetailMenu(record.id) }
+      `${text}\n\n${formatServerDetail(record)}${BRAND_FOOTER}`,
+      { parse_mode: "Markdown", entities, ...kb.serverDetailMenu(record.id) }
     );
   } catch (err) {
     await ctx.reply(`❌ خطأ: ${err.message}`, kb.backButton());
@@ -313,7 +325,7 @@ bot.action("menu:my_servers", async (ctx) => {
 bot.action(/^server:(.+)$/, async (ctx) => {
   const record = db.getServer(ctx.match[1]);
   if (!record) return ctx.answerCbQuery("السيرفر غير موجود", { show_alert: true });
-  await ctx.editMessageText(formatServerDetail(record), {
+  await ctx.editMessageText(formatServerDetail(record) + BRAND_FOOTER, {
     parse_mode: "Markdown",
     ...kb.serverDetailMenu(record.id),
   });
@@ -337,9 +349,10 @@ bot.action("menu:premium", async (ctx) => {
   const status = db.isPremiumActive(ctx.from.id)
     ? `مفعّل حتى ${user.premiumExpiresAt.split("T")[0]}`
     : "غير مفعّل";
+  const { text, entities } = withPremiumEmoji("الاشتراك المميز");
   await ctx.editMessageText(
-    `💎 الاشتراك المميز\nالحالة الحالية: ${status}\n\nاختر مدة الاشتراك:`,
-    kb.premiumMenu()
+    `${text}\nالحالة الحالية: ${status}\n\nاختر مدة الاشتراك:`,
+    { entities, ...kb.premiumMenu() }
   );
 });
 
@@ -347,7 +360,8 @@ bot.action(/^premium:(3|7|30)$/, async (ctx) => {
   const days = ctx.match[1];
   await ctx.editMessageText(
     `للتفعيل، تواصل مع @${ADMIN_CONTACT_USERNAME} وأرسل له معرفك:\n\n` +
-      `\`${ctx.from.id}\`\n\nمع تحديد مدة الاشتراك: ${days} أيام`,
+      `\`${ctx.from.id}\`\n\nمع تحديد مدة الاشتراك: ${days} أيام` +
+      BRAND_FOOTER,
     { parse_mode: "Markdown", ...kb.backButton() }
   );
   for (const adminId of adminIds) {
@@ -360,8 +374,6 @@ bot.action(/^premium:(3|7|30)$/, async (ctx) => {
   }
 });
 
-// ---- Admin ----
-
 bot.command("grant", async (ctx) => {
   if (!isAdmin(ctx.from.id)) return;
   const parts = ctx.message.text.split(" ").filter(Boolean);
@@ -373,7 +385,7 @@ bot.command("grant", async (ctx) => {
   const user = db.grantPremium(targetId, days);
   await ctx.reply(`✅ تم تفعيل البريميوم لـ ${targetId} حتى ${user.premiumExpiresAt.split("T")[0]}`);
   try {
-    await bot.telegram.sendMessage(targetId, `🎉 تم تفعيل اشتراكك المميز لمدة ${days} يوم!`);
+    await bot.telegram.sendMessage(targetId, `🎉 تم تفعيل اشتراكك المميز لمدة ${days} يوم!${BRAND_FOOTER}`);
   } catch (_) {}
 });
 
@@ -417,7 +429,6 @@ bot.action(/^admin_delete:(.+)$/, async (ctx) => {
   }
 });
 
-// ---- Expiry cleanup ----
 cron.schedule("0 3 * * *", async () => {
   console.log("Running expiry cleanup...");
   for (const server of db.getExpiredServers()) {
@@ -427,7 +438,7 @@ cron.schedule("0 3 * * *", async () => {
       try {
         await bot.telegram.sendMessage(
           server.telegramUserId,
-          `⌛ انتهت صلاحية سيرفرك #${server.id} وتم حذفه.`
+          `⌛ انتهت صلاحية سيرفرك #${server.id} وتم حذفه.${BRAND_FOOTER}`
         );
       } catch (_) {}
     } catch (err) {
