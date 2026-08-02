@@ -1,13 +1,4 @@
 #!/usr/bin/env python3
-"""
-Runs Xray with a dynamically-managed client list, and exposes an
-internal-only HTTP API (port 8082) the bot uses to add/remove users.
-
-Two inbounds are always present:
-  - VLESS+WS on port 8080
-  - VMess +WS on port 8081
-"""
-
 import json
 import os
 import subprocess
@@ -35,50 +26,28 @@ def save_clients(clients):
 
 
 def build_config(clients):
-    vless_clients = [
-        {"id": c["uuid"], "level": 0}
-        for c in clients
-        if c["protocol"] == "vless"
-    ]
-    vmess_clients = [
-        {"id": c["uuid"], "level": 0, "alterId": 0}
-        for c in clients
-        if c["protocol"] == "vmess"
-    ]
+    vless_clients = [{"id": c["uuid"], "level": 0} for c in clients if c["protocol"] == "vless"]
+    vmess_clients = [{"id": c["uuid"], "level": 0, "alterId": 0} for c in clients if c["protocol"] == "vmess"]
 
     return {
         "log": {"loglevel": "warning"},
         "inbounds": [
             {
-                "port": 8080,
-                "listen": "0.0.0.0",
-                "protocol": "vless",
+                "port": 8080, "listen": "0.0.0.0", "protocol": "vless",
                 "settings": {"clients": vless_clients, "decryption": "none"},
-                "streamSettings": {
-                    "network": "ws",
-                    "wsSettings": {"path": "/vless"},
-                },
+                "streamSettings": {"network": "ws", "wsSettings": {"path": "/vless"}},
             },
             {
-                "port": 8081,
-                "listen": "0.0.0.0",
-                "protocol": "vmess",
+                "port": 8081, "listen": "0.0.0.0", "protocol": "vmess",
                 "settings": {"clients": vmess_clients},
-                "streamSettings": {
-                    "network": "ws",
-                    "wsSettings": {"path": "/vmess"},
-                },
+                "streamSettings": {"network": "ws", "wsSettings": {"path": "/vmess"}},
             },
         ],
         "outbounds": [
             {"protocol": "freedom", "settings": {}},
             {"protocol": "blackhole", "tag": "blocked"},
         ],
-        "routing": {
-            "rules": [
-                {"type": "field", "ip": ["geoip:private"], "outboundTag": "blocked"}
-            ]
-        },
+        "routing": {"rules": [{"type": "field", "ip": ["geoip:private"], "outboundTag": "blocked"}]},
     }
 
 
@@ -144,9 +113,7 @@ class Handler(BaseHTTPRequestHandler):
 
         protocol, uuid = parts[1], parts[2]
         clients = load_clients()
-        clients = [
-            c for c in clients if not (c["protocol"] == protocol and c["uuid"] == uuid)
-        ]
+        clients = [c for c in clients if not (c["protocol"] == protocol and c["uuid"] == uuid)]
         save_clients(clients)
         restart_xray()
 
