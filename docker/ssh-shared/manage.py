@@ -1,22 +1,10 @@
 #!/usr/bin/env python3
-"""
-Internal-only management API for the shared SSH server.
-Not exposed publicly - only reachable via Railway's private network
-(http://<service>.railway.internal:8081) from the bot service.
-
-Endpoints:
-  POST   /users   {"username": "...", "password": "..."}  -> create user
-  DELETE /users/<username>                                 -> remove user
-
-All requests must include header: X-API-Key: <API_SECRET env var>
-"""
-
 import json
 import os
 import subprocess
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-API_SECRET = os.environ["API_SECRET"]  # required, no default - fail loudly if unset
+API_SECRET = os.environ["API_SECRET"]
 
 
 def run(cmd):
@@ -53,7 +41,6 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             return self._send_json(400, {"error": "invalid body"})
 
-        # Basic sanity check on username to avoid shell weirdness
         if not username.isalnum() or len(username) > 32:
             return self._send_json(400, {"error": "invalid username"})
 
@@ -61,9 +48,7 @@ class Handler(BaseHTTPRequestHandler):
         if code != 0 and "already exists" not in err:
             return self._send_json(500, {"error": f"adduser failed: {err}"})
 
-        proc = subprocess.run(
-            ["chpasswd"], input=f"{username}:{password}\n", text=True
-        )
+        proc = subprocess.run(["chpasswd"], input=f"{username}:{password}\n", text=True)
         if proc.returncode != 0:
             return self._send_json(500, {"error": "chpasswd failed"})
 
@@ -87,7 +72,7 @@ class Handler(BaseHTTPRequestHandler):
         return self._send_json(200, {"status": "deleted", "username": username})
 
     def log_message(self, format, *args):
-        pass  # keep logs quiet - avoid leaking usernames/passwords into stdout
+        pass
 
 
 if __name__ == "__main__":
