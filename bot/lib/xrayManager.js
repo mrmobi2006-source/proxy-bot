@@ -10,16 +10,11 @@ class XrayManagerClient {
   async createClient(protocol, uuid, remark) {
     const res = await fetch(`${this.baseUrl}/clients`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-API-Key": this.apiSecret,
-      },
+      headers: { "Content-Type": "application/json", "X-API-Key": this.apiSecret },
       body: JSON.stringify({ protocol, uuid, remark }),
     });
     const data = await res.json();
-    if (!res.ok) {
-      throw new Error(`Xray client creation failed: ${data.error || res.status}`);
-    }
+    if (!res.ok) throw new Error(`Xray client creation failed: ${data.error || res.status}`);
     return data;
   }
 
@@ -29,9 +24,7 @@ class XrayManagerClient {
       headers: { "X-API-Key": this.apiSecret },
     });
     const data = await res.json();
-    if (!res.ok) {
-      throw new Error(`Xray client deletion failed: ${data.error || res.status}`);
-    }
+    if (!res.ok) throw new Error(`Xray client deletion failed: ${data.error || res.status}`);
     return data;
   }
 }
