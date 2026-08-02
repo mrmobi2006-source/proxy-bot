@@ -8,9 +8,16 @@ nameserver 1.1.1.1
 nameserver 8.8.8.8
 EOF
 
-# مهم: sshd يأخذ فقط أول سطر لكل إعداد ويتجاهل أي تكرار لاحق.
-# صورة Alpine تجي بإعدادات افتراضية مقيّدة، فلازم نحذفها أولاً
-# قبل ما نضيف إعداداتنا حتى تصير هي الفعّالة فعليًا.
+cat > /etc/motd <<'EOF'
+
+  ================================
+        Powered by @xtt1x
+     Channel: https://t.me/xtt10x
+       (c) All rights reserved
+  ================================
+
+EOF
+
 sed -i \
   -e '/^AllowTcpForwarding/d' \
   -e '/^PermitTunnel/d' \
@@ -20,6 +27,7 @@ sed -i \
   -e '/^UseDNS/d' \
   -e '/^ClientAliveInterval/d' \
   -e '/^ClientAliveCountMax/d' \
+  -e '/^PrintMotd/d' \
   /etc/ssh/sshd_config
 
 cat >> /etc/ssh/sshd_config <<EOF
@@ -31,6 +39,7 @@ GatewayPorts no
 UseDNS no
 ClientAliveInterval 60
 ClientAliveCountMax 3
+PrintMotd yes
 EOF
 
 echo "Starting management API..."
