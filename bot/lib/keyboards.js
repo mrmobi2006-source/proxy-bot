@@ -1,10 +1,16 @@
 const { Markup } = require("telegraf");
 
+// Bot API 9.4+ button colors: "primary" (blue), "success" (green), "danger" (red).
+// Omit style entirely for the default gray look.
+function styled(button, style) {
+  return style ? { ...button, style } : button;
+}
+
 function mainMenu(isAdmin) {
   const rows = [
-    [Markup.button.callback("🆕 إنشاء سيرفر", "menu:new")],
-    [Markup.button.callback("📋 سيرفراتي", "menu:my_servers")],
-    [Markup.button.callback("💎 الاشتراك المميز", "menu:premium")],
+    [styled(Markup.button.callback("🆕 إنشاء سيرفر", "menu:new"), "success")],
+    [styled(Markup.button.callback("📋 سيرفراتي", "menu:my_servers"), "primary")],
+    [styled(Markup.button.callback("💎 الاشتراك المميز", "menu:premium"), "primary")],
   ];
   if (isAdmin) {
     rows.push([Markup.button.callback("⚙️ لوحة الإدارة", "menu:admin")]);
@@ -20,17 +26,17 @@ function backButton() {
 
 function protocolMenu() {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("🟣 VLESS", "new:vless")],
-    [Markup.button.callback("🔵 VMess", "new:vmess")],
-    [Markup.button.callback("🟢 SSH", "new:ssh")],
+    [styled(Markup.button.callback("🟣 VLESS", "new:vless"), "primary")],
+    [styled(Markup.button.callback("🔵 VMess", "new:vmess"), "primary")],
+    [styled(Markup.button.callback("🟢 SSH", "new:ssh"), "primary")],
     [Markup.button.callback("⬅️ رجوع", "menu:main")],
   ]);
 }
 
 function confirmMenu(protocol) {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("✅ تأكيد الإنشاء", `confirm:${protocol}`)],
-    [Markup.button.callback("❌ إلغاء", "menu:main")],
+    [styled(Markup.button.callback("✅ تأكيد الإنشاء", `confirm:${protocol}`), "success")],
+    [styled(Markup.button.callback("❌ إلغاء", "menu:main"), "danger")],
   ]);
 }
 
@@ -47,16 +53,16 @@ function myServersMenu(servers) {
 
 function serverDetailMenu(serverId) {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("🗑️ حذف هذا السيرفر", `delete:${serverId}`)],
+    [styled(Markup.button.callback("🗑️ حذف هذا السيرفر", `delete:${serverId}`), "danger")],
     [Markup.button.callback("⬅️ رجوع", "menu:my_servers")],
   ]);
 }
 
 function premiumMenu() {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("3 أيام", "premium:3")],
-    [Markup.button.callback("7 أيام", "premium:7")],
-    [Markup.button.callback("30 يوم", "premium:30")],
+    [styled(Markup.button.callback("3 أيام", "premium:3"), "primary")],
+    [styled(Markup.button.callback("7 أيام", "premium:7"), "primary")],
+    [styled(Markup.button.callback("30 يوم", "premium:30"), "success")],
     [Markup.button.callback("⬅️ رجوع", "menu:main")],
   ]);
 }
@@ -70,7 +76,7 @@ function adminMenu() {
 
 function adminServerDetailMenu(serverId) {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("🗑️ حذف", `admin_delete:${serverId}`)],
+    [styled(Markup.button.callback("🗑️ حذف", `admin_delete:${serverId}`), "danger")],
     [Markup.button.callback("⬅️ رجوع", "admin:servers")],
   ]);
 }
