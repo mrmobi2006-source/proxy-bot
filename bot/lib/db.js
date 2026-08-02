@@ -5,21 +5,16 @@ const DB_PATH = path.join(__dirname, "..", "data", "db.json");
 
 function load() {
   if (!fs.existsSync(DB_PATH)) {
-    fs.writeFileSync(
-      DB_PATH,
-      JSON.stringify({ servers: [], users: [] }, null, 2)
-    );
+    fs.writeFileSync(DB_PATH, JSON.stringify({ servers: [], users: [] }, null, 2));
   }
   const data = JSON.parse(fs.readFileSync(DB_PATH, "utf-8"));
-  if (!data.users) data.users = []; // migrate older db.json files
+  if (!data.users) data.users = [];
   return data;
 }
 
 function save(data) {
   fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
 }
-
-// ---- Servers ----
 
 function addServer(server) {
   const data = load();
@@ -57,8 +52,6 @@ function getExpiredServers() {
   const now = Date.now();
   return data.servers.filter((s) => new Date(s.expiresAt).getTime() < now);
 }
-
-// ---- Users / premium subscriptions ----
 
 function getUser(telegramUserId) {
   const data = load();
@@ -98,14 +91,6 @@ function grantPremium(telegramUserId, days) {
 }
 
 module.exports = {
-  addServer,
-  getServersByUser,
-  getActiveServersByUser,
-  getAllServers,
-  getServer,
-  removeServer,
-  getExpiredServers,
-  getUser,
-  isPremiumActive,
-  grantPremium,
+  addServer, getServersByUser, getActiveServersByUser, getAllServers,
+  getServer, removeServer, getExpiredServers, getUser, isPremiumActive, grantPremium,
 };
