@@ -49,9 +49,9 @@ const sessions = new Map();
 
 const BRAND_FOOTER =
   "\n\n➖➖➖➖➖➖➖➖➖➖\n" +
-  "© جميع الحقوق محفوظة\n" +
-  `📢 قناتنا: ${CHANNEL_URL}\n` +
-  `👤 الدعم: @${ADMIN_CONTACT_USERNAME}`;
+  "© MUSLIM BO 2026 \n" +
+  `📢my CHANNEL: ${CHANNEL_URL}\n` +
+  `👤admin contact: @${ADMIN_CONTACT_USERNAME}`;
 
 function shortId() {
   return randomBytes(4).toString("hex");
@@ -91,10 +91,6 @@ function canCreateServer(telegramUserId) {
 
 function sanitizeHandle(text) {
   return (text || "").trim().replace(/[^a-zA-Z0-9]/g, "").slice(0, 32);
-}
-
-function sanitizePassword(text) {
-  return (text || "").trim();
 }
 
 async function resolveIp(hostname) {
@@ -217,7 +213,7 @@ function formatServerDetail(record) {
 
 bot.start(async (ctx) => {
   const { text, entities } = withPremiumEmoji(
-    "أهلاً بك في بوتنا الاحترافي لإدارة السيرفرات!\n\nاختر من القائمة:"
+    "HI UESR !\n\nSELECT TO PANEL:"
   );
   await ctx.reply(text + BRAND_FOOTER, {
     entities,
@@ -227,7 +223,7 @@ bot.start(async (ctx) => {
 
 bot.action("menu:main", async (ctx) => {
   sessions.delete(ctx.from.id);
-  await ctx.editMessageText("القائمة الرئيسية:", kb.mainMenu(isAdmin(ctx.from.id)));
+  await ctx.editMessageText("1 PAGE:", kb.mainMenu(isAdmin(ctx.from.id)));
 });
 
 bot.action("menu:new", async (ctx) => {
@@ -235,7 +231,7 @@ bot.action("menu:new", async (ctx) => {
   if (!check.ok) {
     return ctx.answerCbQuery(check.reason, { show_alert: true });
   }
-  await ctx.editMessageText("اختر نوع السيرفر:", kb.protocolMenu());
+  await ctx.editMessageText("SLCT YR SERV:", kb.protocolMenu());
 });
 
 bot.action("new:ssh", async (ctx) => {
@@ -266,7 +262,7 @@ bot.on("text", async (ctx) => {
   }
 
   if (session.step === "ssh_password") {
-    const password = sanitizePassword(ctx.message.text);
+    const password = sanitizeHandle(ctx.message.text);
     if (password.length < 6) {
       return ctx.reply("كلمة مرور قصيرة جدًا، حاول مرة أخرى (6 أحرف على الأقل):");
     }
@@ -342,9 +338,9 @@ bot.action(/^delete:(.+)$/, async (ctx) => {
   }
   try {
     await deprovision(record);
-    await ctx.editMessageText("🗑️ تم الحذف بنجاح", kb.backButton());
+    await ctx.editMessageText("🗑️ SUCC DELET", kb.backButton());
   } catch (err) {
-    await ctx.answerCbQuery(`فشل الحذف: ${err.message}`, { show_alert: true });
+    await ctx.answerCbQuery(`Failed DELET: ${err.message}`, { show_alert: true });
   }
 });
 
@@ -353,9 +349,9 @@ bot.action("menu:premium", async (ctx) => {
   const status = db.isPremiumActive(ctx.from.id)
     ? `مفعّل حتى ${user.premiumExpiresAt.split("T")[0]}`
     : "غير مفعّل";
-  const { text, entities } = withPremiumEmoji("الاشتراك المميز");
+  const { text, entities } = withPremiumEmoji("PREMIUM PLAN");
   await ctx.editMessageText(
-    `${text}\nالحالة الحالية: ${status}\n\nاختر مدة الاشتراك:`,
+    `${text}\nYR PLAN: ${status}\n\nSLCT TR PLAN:`,
     { entities, ...kb.premiumMenu() }
   );
 });
@@ -395,7 +391,7 @@ bot.command("grant", async (ctx) => {
 
 bot.action("menu:admin", async (ctx) => {
   if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery("غير مسموح", { show_alert: true });
-  await ctx.editMessageText("⚙️ لوحة الإدارة", kb.adminMenu());
+  await ctx.editMessageText("⚙️ ADMIN PANEL", kb.adminMenu());
 });
 
 bot.action("admin:servers", async (ctx) => {
@@ -407,8 +403,8 @@ bot.action("admin:servers", async (ctx) => {
   const rows = servers.map((s) => [
     { text: `${kb.protocolIcon(s.protocol)} #${s.id} - ${s.telegramUserId}`, callback_data: `admin_view:${s.id}` },
   ]);
-  rows.push([{ text: "⬅️ رجوع", callback_data: "menu:admin" }]);
-  await ctx.editMessageText("كل السيرفرات:", { reply_markup: { inline_keyboard: rows } });
+  rows.push([{ text: "⬅️BACK", callback_data: "menu:admin" }]);
+  await ctx.editMessageText("ALL SERV:", { reply_markup: { inline_keyboard: rows } });
 });
 
 bot.action(/^admin_view:(.+)$/, async (ctx) => {
@@ -427,7 +423,7 @@ bot.action(/^admin_delete:(.+)$/, async (ctx) => {
   if (!record) return ctx.answerCbQuery("غير موجود", { show_alert: true });
   try {
     await deprovision(record);
-    await ctx.editMessageText("🗑️ تم الحذف", kb.backButton());
+    await ctx.editMessageText("🗑️ SUCC DELET", kb.backButton());
   } catch (err) {
     await ctx.answerCbQuery(`فشل: ${err.message}`, { show_alert: true });
   }
@@ -451,17 +447,8 @@ cron.schedule("0 3 * * *", async () => {
   }
 });
 
-// Ensure admins are present in persistent DB on startup
-for (const aid of adminIds) {
-  try {
-    db.addAdmin(aid);
-  } catch (_) {}
-}
-
-bot.launch().then(() => console.log('Bot started.')).catch((err) => {
-  console.error('Bot failed to start:', err.message);
-  process.exit(1);
-});
+bot.launch();
+console.log("Bot started.");
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
