@@ -1,13 +1,21 @@
 {
   "name": "proxy-bot",
-  "version": "1.0.0",
-  "description": "Telegram bot that provisions VLESS/VMess/SSH servers on Railway",
+  "version": "2.0.0",
+  "description": "Professional Telegram bot for VLESS/VMess/SSH server provisioning",
   "main": "bot.js",
-  "scripts": { "start": "node bot.js" },
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "NODE_ENV=development node bot.js",
+    "logs": "tail -f logs/*.log"
+  },
   "dependencies": {
     "telegraf": "^4.16.3",
     "dotenv": "^16.4.5",
     "node-cron": "^3.0.3"
   },
-  "engines": { "node": ">=18" }
+  "engines": {
+    "node": ">=18"
+  },
+  "author": "MUSLIM BO",
+  "license": "MIT"
 }
