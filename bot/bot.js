@@ -93,6 +93,10 @@ function sanitizeHandle(text) {
   return (text || "").trim().replace(/[^a-zA-Z0-9]/g, "").slice(0, 32);
 }
 
+function sanitizePassword(text) {
+  return (text || "").trim();
+}
+
 async function resolveIp(hostname) {
   try {
     const { address } = await dns.lookup(hostname, { family: 4 });
@@ -262,7 +266,7 @@ bot.on("text", async (ctx) => {
   }
 
   if (session.step === "ssh_password") {
-    const password = sanitizeHandle(ctx.message.text);
+    const password = sanitizePassword(ctx.message.text);
     if (password.length < 6) {
       return ctx.reply("كلمة مرور قصيرة جدًا، حاول مرة أخرى (6 أحرف على الأقل):");
     }
@@ -447,8 +451,17 @@ cron.schedule("0 3 * * *", async () => {
   }
 });
 
-bot.launch();
-console.log("Bot started.");
+// Ensure admins are present in persistent DB on startup
+for (const aid of adminIds) {
+  try {
+    db.addAdmin(aid);
+  } catch (_) {}
+}
+
+bot.launch().then(() => console.log('Bot started.')).catch((err) => {
+  console.error('Bot failed to start:', err.message);
+  process.exit(1);
+});
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
