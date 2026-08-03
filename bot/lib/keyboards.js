@@ -8,35 +8,35 @@ function styled(button, style) {
 
 function mainMenu(isAdmin) {
   const rows = [
-    [styled(Markup.button.callback("🆕 إنشاء سيرفر", "menu:new"), "success")],
-    [styled(Markup.button.callback("📋 سيرفراتي", "menu:my_servers"), "primary")],
-    [styled(Markup.button.callback("💎 الاشتراك المميز", "menu:premium"), "primary")],
+    [styled(Markup.button.callback("🆕 creat serv", "menu:new"), "success")],
+    [styled(Markup.button.callback("📋 my serv", "menu:my_servers"), "primary")],
+    [styled(Markup.button.callback("💎 premium", "menu:premium"), "primary")],
   ];
   if (isAdmin) {
-    rows.push([Markup.button.callback("⚙️ لوحة الإدارة", "menu:admin")]);
+    rows.push([Markup.button.callback("⚙️ admin panel", "menu:admin")]);
   }
   return Markup.inlineKeyboard(rows);
 }
 
 function backButton() {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("⬅️ رجوع", "menu:main")],
+    [Markup.button.callback("⬅️ back", "menu:main")],
   ]);
 }
 
 function protocolMenu() {
   return Markup.inlineKeyboard([
-    [styled(Markup.button.callback("🟣 VLESS", "new:vless"), "primary")],
-    [styled(Markup.button.callback("🔵 VMess", "new:vmess"), "primary")],
-    [styled(Markup.button.callback("🟢 SSH", "new:ssh"), "primary")],
-    [Markup.button.callback("⬅️ رجوع", "menu:main")],
+    [styled(Markup.button.callback("🔞 VLESS", "new:vless"), "primary")],
+    [styled(Markup.button.callback("👁 VMess", "new:vmess"), "primary")],
+    [styled(Markup.button.callback("📵 SSH", "new:ssh"), "primary")],
+    [Markup.button.callback("⬅️ back", "menu:main")],
   ]);
 }
 
 function confirmMenu(protocol) {
   return Markup.inlineKeyboard([
-    [styled(Markup.button.callback("✅ تأكيد الإنشاء", `confirm:${protocol}`), "success")],
-    [styled(Markup.button.callback("❌ إلغاء", "menu:main"), "danger")],
+    [styled(Markup.button.callback("✅ Confirmation", `confirm:${protocol}`), "success")],
+    [styled(Markup.button.callback("❌ Cancel", "menu:main"), "danger")],
   ]);
 }
 
@@ -60,17 +60,17 @@ function serverDetailMenu(serverId) {
 
 function premiumMenu() {
   return Markup.inlineKeyboard([
-    [styled(Markup.button.callback("3 أيام", "premium:3"), "primary")],
-    [styled(Markup.button.callback("7 أيام", "premium:7"), "primary")],
-    [styled(Markup.button.callback("30 يوم", "premium:30"), "success")],
-    [Markup.button.callback("⬅️ رجوع", "menu:main")],
+    [styled(Markup.button.callback("3 day", "premium:3"), "primary")],
+    [styled(Markup.button.callback("7 day", "premium:7"), "primary")],
+    [styled(Markup.button.callback("30 day", "premium:30"), "success")],
+    [Markup.button.callback("⬅️ back", "menu:main")],
   ]);
 }
 
 function adminMenu() {
   return Markup.inlineKeyboard([
     [Markup.button.callback("📊 all serv", "admin:servers")],
-    [Markup.button.callback("⬅️ ", "menu:main")],
+    [Markup.button.callback("⬅️ back", "menu:main")],
   ]);
 }
 
