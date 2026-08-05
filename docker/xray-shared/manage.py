@@ -5,7 +5,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 API_SECRET   = os.environ["API_SECRET"]
 CLIENTS_FILE = "/app/clients.json"
 CONFIG_FILE  = "/app/config.json"
-XRAY_API     = "127.0.0.1:8083"
+XRAY_API     = "127.0.0.1:8082"
 
 xray_proc = None
 lock      = threading.Lock()
