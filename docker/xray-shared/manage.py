@@ -108,7 +108,7 @@ def build_config(clients):
 
             {
                 "listen": "127.0.0.1",
-                "port": 18080,
+                "port": 8081,
                 "protocol": "vless",
                 "settings": {
                     "clients": vless,
@@ -124,7 +124,7 @@ def build_config(clients):
 
             {
                 "listen": "127.0.0.1",
-                "port": 18081,
+                "port": 8082,
                 "protocol": "vmess",
                 "settings": {
                     "clients": vmess
