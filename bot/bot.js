@@ -1,575 +1,326 @@
 require("dotenv").config();
 const { Telegraf } = require("telegraf");
 const { randomUUID, randomBytes } = require("crypto");
-const dns = require("dns").promises;
-const cron = require("node-cron");
+const dns    = require("dns").promises;
+const cron   = require("node-cron");
 
-const { SshManagerClient } = require("./lib/sshManager");
+const { SshManagerClient }  = require("./lib/sshManager");
 const { XrayManagerClient } = require("./lib/xrayManager");
-const { withPremiumEmoji } = require("./lib/premiumEmoji");
+const { withEmoji, withEmojiWrap } = require("./lib/premiumEmoji");
 const kb = require("./lib/keyboards");
 const db = require("./lib/db");
-const logger = require("./lib/logger");
-const { validateInput } = require("./lib/validator");
 
 const {
   BOT_TOKEN,
-  ADMIN_TELEGRAM_IDS = "6154678499",
+  ADMIN_TELEGRAM_IDS     = "6154678499",
   ADMIN_CONTACT_USERNAME = "xtt1x",
-  CHANNEL_URL = "https://t.me/xtt10x",
-  SSH_SHARED_INTERNAL_HOST,
-  SSH_API_SECRET,
-  SSH_PUBLIC_HOST,
-  SSH_PUBLIC_PORT,
-  XRAY_SHARED_INTERNAL_HOST,
-  XRAY_API_SECRET,
-  XRAY_VLESS_PUBLIC_HOST,
-  XRAY_VMESS_PUBLIC_HOST,
-  FREE_TRIAL_DAYS = "1",
-  MAX_SERVERS_FREE = "1",
-  MAX_SERVERS_PREMIUM = "10",
+  CHANNEL_URL            = "https://t.me/xtt10x",
+  SSH_SHARED_INTERNAL_HOST, SSH_API_SECRET, SSH_PUBLIC_HOST, SSH_PUBLIC_PORT,
+  XRAY_SHARED_INTERNAL_HOST, XRAY_API_SECRET, XRAY_VLESS_PUBLIC_HOST, XRAY_VMESS_PUBLIC_HOST,
+  FREE_TRIAL_DAYS = "1", ADMIN_TTL_DAYS = "3650",
+  SERVER_COUNTRY  = "🇺🇸 US", USERS_PER_PAGE = "8",
 } = process.env;
 
-if (!BOT_TOKEN) throw new Error("BOT_TOKEN is required in .env");
+if (!BOT_TOKEN) throw new Error("BOT_TOKEN is required");
 
-const adminIds = ADMIN_TELEGRAM_IDS.split(",").map((s) => s.trim()).filter(Boolean);
-const isAdmin = (id) => adminIds.includes(String(id));
+const adminIds = ADMIN_TELEGRAM_IDS.split(",").map(x => x.trim()).filter(Boolean);
+const isAdmin  = id => adminIds.includes(String(id));
 
-const sshManager =
-  SSH_SHARED_INTERNAL_HOST && SSH_API_SECRET
-    ? new SshManagerClient(SSH_SHARED_INTERNAL_HOST, SSH_API_SECRET)
-    : null;
+const sshManager  = SSH_SHARED_INTERNAL_HOST  && SSH_API_SECRET  ? new SshManagerClient(SSH_SHARED_INTERNAL_HOST, SSH_API_SECRET)    : null;
+const xrayManager = XRAY_SHARED_INTERNAL_HOST && XRAY_API_SECRET ? new XrayManagerClient(XRAY_SHARED_INTERNAL_HOST, XRAY_API_SECRET) : null;
 
-const xrayManager =
-  XRAY_SHARED_INTERNAL_HOST && XRAY_API_SECRET
-    ? new XrayManagerClient(XRAY_SHARED_INTERNAL_HOST, XRAY_API_SECRET)
-    : null;
-
-const bot = new Telegraf(BOT_TOKEN);
+const bot      = new Telegraf(BOT_TOKEN);
 const sessions = new Map();
 
-// ✅ تحسين العلامة التجارية
-const BRAND_FOOTER =
-  "\n\n➖➖➖➖➖➖➖➖➖➖\n" +
-  "© MUSLIM BOT 2026 | v2.0\n" +
-  `📢 القناة: ${CHANNEL_URL}\n` +
-  `👤 المشرف: @${ADMIN_CONTACT_USERNAME}`;
+const FOOTER = `\n\n${"─".repeat(18)}\n© جميع الحقوق محفوظة\n📢 ${CHANNEL_URL}\n👤 @${ADMIN_CONTACT_USERNAME}`;
 
-function shortId() {
-  return randomBytes(4).toString("hex");
+function shortId()    { return randomBytes(4).toString("hex"); }
+function bytes2h(b)   { if (!b) return "0 B"; const u=["B","KB","MB","GB","TB"],i=Math.floor(Math.log(b)/Math.log(1024)); return (b/Math.pow(1024,i)).toFixed(2)+" "+u[i]; }
+function daysUntil(i) { return Math.max(0,Math.ceil((new Date(i).getTime()-Date.now())/86400000)); }
+function expireIn(d)  { const x=new Date(); x.setDate(x.getDate()+d); return x.toISOString(); }
+function clean(t)     { return (t||"").trim().replace(/[^a-zA-Z0-9]/g,"").slice(0,32); }
+
+function ttlDays(userId) {
+  if (isAdmin(userId)) return parseInt(ADMIN_TTL_DAYS);
+  if (db.isPremiumActive(String(userId))) return daysUntil(db.getUser(String(userId)).premiumExpiresAt);
+  return parseInt(FREE_TRIAL_DAYS);
 }
 
-function daysUntil(iso) {
-  return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000));
-}
-
-function computeTtlDays(telegramUserId) {
-  const user = db.getUser(telegramUserId);
-  if (db.isPremiumActive(telegramUserId)) {
-    return daysUntil(user.premiumExpiresAt);
-  }
-  return parseInt(FREE_TRIAL_DAYS, 10);
-}
-
-function expiresAtFromDays(days) {
-  const d = new Date();
-  d.setDate(d.getDate() + days);
-  return d.toISOString();
-}
-
-// ✅ تحسين الحد الأقصى للسيرفرات
-function canCreateServer(telegramUserId) {
-  const premium = db.isPremiumActive(telegramUserId);
-  const maxServers = premium ? parseInt(MAX_SERVERS_PREMIUM, 10) : parseInt(MAX_SERVERS_FREE, 10);
-  
-  const active = db.getActiveServersByUser(telegramUserId);
-  if (active.length >= maxServers) {
-    const msg = premium
-      ? `وصلت للحد الأقصى من السيرفرات (${maxServers}).`
-      : `الخطة المجانية تسمح بـ ${MAX_SERVERS_FREE} سيرفر فقط. ترقّ للبريميوم للمزيد.`;
-    return { ok: false, reason: msg };
-  }
+function canCreate(userId) {
+  if (isAdmin(userId)) return { ok: true };
+  if (db.isBanned(String(userId)))       return { ok: false, reason: "🚫 حسابك محظور." };
+  if (!db.canCreateToday(String(userId))) return { ok: false, reason: "⏳ تجاوزت الحد اليومي. حاول غداً." };
   return { ok: true };
 }
 
-function sanitizeHandle(text) {
-  return (text || "").trim().replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 32);
+async function resolveIp(host) {
+  try { const { address } = await dns.lookup(host, { family: 4 }); return address; } catch { return host; }
 }
 
-async function resolveIp(hostname) {
+async function eReply(ctx, text, extra={}) {
+  const { text:t, entities } = withEmoji(text);
+  try { return await ctx.reply(t, { entities, ...extra }); } catch { return ctx.reply(text, extra); }
+}
+async function eEdit(ctx, text, extra={}) { try { await ctx.editMessageText(text, extra); } catch {} }
+
+async function doSsh(userId, username, password) {
+  if (!sshManager) throw new Error("SSH غير مُعد — تحقق من SSH_SHARED_*");
+  if (db.getAllServers().find(s=>s.protocol==="ssh"&&s.status==="active"&&s.username===username)) throw new Error("اسم المستخدم محجوز");
+  await sshManager.createUser(username, password);
+  const ip=await resolveIp(SSH_PUBLIC_HOST), days=ttlDays(userId);
+  const r={ id:shortId(), telegramUserId:String(userId), protocol:"ssh", connectHost:ip, port:SSH_PUBLIC_PORT, username, password, country:SERVER_COUNTRY, dataUp:0, dataDown:0, createdAt:new Date().toISOString(), expiresAt:expireIn(days), status:"active" };
+  db.addServer(r); db.recordCreatedToday(String(userId)); return r;
+}
+
+async function doXray(userId, protocol, remark) {
+  if (!xrayManager) throw new Error("Xray غير مُعد — تحقق من XRAY_SHARED_*");
+  const domain=protocol==="vless"?XRAY_VLESS_PUBLIC_HOST:XRAY_VMESS_PUBLIC_HOST;
+  if (!domain) throw new Error(`دومين ${protocol} غير مُعد`);
+  const uuid=randomUUID(), id=shortId(), email=`${id}@xtt1x`, note=`${remark} | @${ADMIN_CONTACT_USERNAME}`.slice(0,48);
+  await xrayManager.createClient(protocol, uuid, note, email);
+  const ip=await resolveIp(domain), days=ttlDays(userId);
+  const r={ id, telegramUserId:String(userId), protocol, connectHost:ip, sniHost:domain, port:443, uuid, email, wsPath:protocol==="vless"?"/vless":"/vmess", remark:note, country:SERVER_COUNTRY, dataUp:0, dataDown:0, createdAt:new Date().toISOString(), expiresAt:expireIn(days), status:"active" };
+  db.addServer(r); db.recordCreatedToday(String(userId)); return r;
+}
+
+async function doDeprovision(r) {
+  if (r.protocol==="ssh") { if (sshManager) await sshManager.deleteUser(r.username).catch(()=>{}); }
+  else { if (xrayManager) await xrayManager.deleteClient(r.protocol, r.uuid).catch(()=>{}); }
+  db.removeServer(r.id);
+}
+
+async function reproSsh(r, u, p) {
+  if (!sshManager) throw new Error("SSH غير مُعد");
+  if (db.getAllServers().find(s=>s.protocol==="ssh"&&s.status==="active"&&s.username===u&&s.id!==r.id)) throw new Error("اسم المستخدم محجوز");
+  await sshManager.createUser(u, p);
+  await sshManager.deleteUser(r.username).catch(()=>{});
+  return db.updateServer(r.id, { connectHost: await resolveIp(SSH_PUBLIC_HOST), username:u, password:p });
+}
+
+async function reproXray(r) {
+  if (!xrayManager) throw new Error("Xray غير مُعد");
+  const nu=randomUUID(), ne=`${r.id}x@xtt1x`;
+  await xrayManager.createClient(r.protocol, nu, r.remark, ne);
+  await xrayManager.deleteClient(r.protocol, r.uuid).catch(()=>{});
+  return db.updateServer(r.id, { uuid:nu, email:ne });
+}
+
+function xrayLink(r) {
+  if (r.protocol==="vless") return `vless://${r.uuid}@${r.connectHost}:${r.port}?encryption=none&security=tls&sni=${r.sniHost}&type=ws&host=${r.sniHost}&path=${encodeURIComponent(r.wsPath)}#${encodeURIComponent(r.remark)}`;
+  const v={v:"2",ps:r.remark,add:r.connectHost,port:String(r.port),id:r.uuid,aid:"0",net:"ws",type:"none",host:r.sniHost,path:r.wsPath,tls:"tls",sni:r.sniHost};
+  return `vmess://${Buffer.from(JSON.stringify(v)).toString("base64")}`;
+}
+function rawConfig(r) {
+  if (r.protocol==="ssh") return `Host: ${r.connectHost}\nPort: ${r.port}\nUsername: ${r.username}\nPassword: ${r.password}`;
+  return xrayLink(r);
+}
+function card(r, showOwner=false) {
+  let t=`${kb.pIcon(r.protocol)}  ${r.protocol.toUpperCase()}  —  #${r.id}\n🌍  ${r.country}\n📅  ينتهي: ${r.expiresAt.split("T")[0]}\n`;
+  if (showOwner) t+=`👤  المالك: ${r.telegramUserId}\n`;
+  t+=`📊  ↑ ${bytes2h(r.dataUp||0)}  /  ↓ ${bytes2h(r.dataDown||0)}\n\n`;
+  if (r.protocol==="ssh") t+=`Host: \`${r.connectHost}\`\nPort: \`${r.port}\`\nUser: \`${r.username}\`\nPass: \`${r.password}\``;
+  else t+=`\`\`\`\n${xrayLink(r)}\n\`\`\``;
+  return t;
+}
+
+bot.start(async ctx => {
+  db.touchUser(String(ctx.from.id), ctx.from.username||null);
+  const { text, entities } = withEmojiWrap("أهلاً بك في بوتنا الاحترافي");
+  try { await ctx.reply(`${text}\n\nإدارة سيرفرات SSH · VLESS · VMess${FOOTER}`, { entities, ...kb.mainMenu(isAdmin(ctx.from.id)) }); }
+  catch { await ctx.reply(`أهلاً بك في بوتنا الاحترافي\n\nإدارة سيرفرات SSH · VLESS · VMess${FOOTER}`, kb.mainMenu(isAdmin(ctx.from.id))); }
+});
+
+bot.command("grant", async ctx => {
+  if (!isAdmin(ctx.from.id)) return;
+  const [,id,d]=ctx.message.text.split(" "); const days=parseInt(d);
+  if (!id||!days) return ctx.reply("الاستخدام: /grant <id> <days>");
+  const u=db.grantPremium(id, days);
+  await ctx.reply(`✅ تم منح ${days} يوم لـ ${id} حتى ${u.premiumExpiresAt.split("T")[0]}`);
+  try { await bot.telegram.sendMessage(id,`🎉 تم تفعيل اشتراكك المميز لمدة ${days} يوم!${FOOTER}`); } catch {}
+});
+
+bot.action("menu:main", async ctx => { sessions.delete(ctx.from.id); await eEdit(ctx,"القائمة الرئيسية:", kb.mainMenu(isAdmin(ctx.from.id))); });
+bot.action("menu:new", async ctx => {
+  db.touchUser(String(ctx.from.id), ctx.from.username||null);
+  const c=canCreate(ctx.from.id); if (!c.ok) return ctx.answerCbQuery(c.reason,{show_alert:true});
+  await eEdit(ctx,"اختر نوع السيرفر:", kb.protocolMenu());
+});
+bot.action("new:ssh", async ctx => { sessions.set(ctx.from.id,{step:"ssh_username"}); await eEdit(ctx,"✏️  أرسل اسم المستخدم (حروف وأرقام إنجليزية، 3–20 حرف):"); });
+bot.action(["new:vless","new:vmess"], async ctx => { const p=ctx.match[0].split(":")[1]; sessions.set(ctx.from.id,{step:"xray_remark",protocol:p}); await eEdit(ctx,"✏️  أرسل اسمًا مميزًا لسيرفرك:"); });
+bot.action("menu:my_servers", async ctx => {
+  const l=db.getActiveServersByUser(String(ctx.from.id));
+  if (!l.length) return eEdit(ctx,"لا تملك أي سيرفرات نشطة.", kb.back("menu:main"));
+  await eEdit(ctx,"📋  سيرفراتك:", kb.serversList(l,false));
+});
+bot.action(/^server:(.+)$/, async ctx => {
+  const r=db.getServer(ctx.match[1]); if (!r) return ctx.answerCbQuery("غير موجود",{show_alert:true});
+  const ce=isAdmin(ctx.from.id)||db.isPremiumActive(String(ctx.from.id));
+  await eEdit(ctx, card(r), {parse_mode:"Markdown",...kb.serverDetail(r.id,r.protocol,ce,false)});
+});
+bot.action(/^copy:(.+)$/, async ctx => {
+  const r=db.getServer(ctx.match[1]); if (!r) return ctx.answerCbQuery("غير موجود",{show_alert:true});
+  await ctx.answerCbQuery("📋  تم إرسال الكونفيغ");
+  await ctx.reply(`📋  #${r.id}  ·  ${r.protocol.toUpperCase()}  ·  ${r.country}\n\n\`\`\`\n${rawConfig(r)}\n\`\`\``,{parse_mode:"Markdown"});
+});
+bot.action(/^stats:(.+)$/, async ctx => {
+  const r=db.getServer(ctx.match[1]); if (!r) return ctx.answerCbQuery("غير موجود",{show_alert:true});
+  let up=r.dataUp||0, dn=r.dataDown||0;
+  if (r.protocol!=="ssh"&&xrayManager&&r.email) { try { const st=await xrayManager.getStats(r.email); up=st.up; dn=st.down; db.updateServerUsage(r.id,up,dn); } catch {} }
+  await ctx.answerCbQuery(`↑ ${bytes2h(up)}  /  ↓ ${bytes2h(dn)}`,{show_alert:true});
+});
+bot.action(/^delete:(.+)$/, async ctx => {
+  if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery("فقط المشرف يستطيع الحذف",{show_alert:true});
+  const r=db.getServer(ctx.match[1]); if (!r) return ctx.answerCbQuery("غير موجود",{show_alert:true});
+  await eEdit(ctx,`هل تريد حذف #${r.id} (${r.protocol} — ${r.telegramUserId})؟`, kb.confirmDelete(r.id));
+});
+bot.action(/^confirm_delete:(.+)$/, async ctx => {
+  if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery("غير مسموح",{show_alert:true});
+  const r=db.getServer(ctx.match[1]); if (!r) return ctx.answerCbQuery("غير موجود",{show_alert:true});
+  try { await doDeprovision(r); await eEdit(ctx,`🗑️  تم حذف #${r.id}.`, kb.back("menu:admin")); try { await bot.telegram.sendMessage(r.telegramUserId,`⚠️  تم حذف سيرفرك #${r.id} (${r.protocol}) بواسطة المشرف.`); } catch {} }
+  catch (e) { await ctx.answerCbQuery(`فشل: ${e.message}`,{show_alert:true}); }
+});
+bot.action(/^edit:(.+)$/, async ctx => {
+  const uid=String(ctx.from.id); const ce=isAdmin(ctx.from.id)||db.isPremiumActive(uid);
+  if (!ce) return ctx.answerCbQuery("فقط المشتركون المميزون يمكنهم التعديل",{show_alert:true});
+  const r=db.getServer(ctx.match[1]); if (!r) return ctx.answerCbQuery("غير موجود",{show_alert:true});
+  if (r.telegramUserId!==uid&&!isAdmin(ctx.from.id)) return ctx.answerCbQuery("غير مسموح",{show_alert:true});
+  if (r.protocol==="ssh") { sessions.set(ctx.from.id,{step:"edit_ssh_username",serverId:r.id}); await eEdit(ctx,"✏️  أرسل اسم المستخدم الجديد:"); }
+  else { await eEdit(ctx,`تأكيد تجديد UUID لسيرفر #${r.id}؟\n⚠️  الكونفيغ القديم سيتوقف فور التجديد.`, kb.confirmEditXray(r.id)); }
+});
+bot.action(/^confirm_edit_xray:(.+)$/, async ctx => {
+  const r=db.getServer(ctx.match[1]); if (!r) return ctx.answerCbQuery("غير موجود",{show_alert:true});
+  if (r.telegramUserId!==String(ctx.from.id)&&!isAdmin(ctx.from.id)) return ctx.answerCbQuery("غير مسموح",{show_alert:true});
+  await ctx.editMessageText("جارٍ التجديد... ⏳");
+  try { const u=await reproXray(r); const {text,entities}=withEmojiWrap("تم التجديد بنجاح"); await ctx.reply(`${text}\n\n${card(u)}${FOOTER}`,{parse_mode:"Markdown",entities,...kb.serverDetail(u.id,u.protocol,true,false)}); }
+  catch(e) { await ctx.reply(`❌  ${e.message}`, kb.back("menu:my_servers")); }
+});
+bot.action("menu:premium", async ctx => {
+  const uid=String(ctx.from.id), active=db.isPremiumActive(uid), until=active?db.getUser(uid).premiumExpiresAt.split("T")[0]:"";
+  const {statusLine,keyboard}=kb.premiumMenu(active,until);
+  await eEdit(ctx,`💎  الاشتراك المميز\n\nالحالة: ${statusLine}\n\nاختر مدة الاشتراك:`, keyboard);
+});
+bot.action(/^premium_req:(\d+)$/, async ctx => {
+  const days=ctx.match[1], uid=String(ctx.from.id), un=ctx.from.username||"-";
+  await eEdit(ctx,`📨  تم إرسال طلبك.\n\nمعرفك: \`${uid}\`\nالمدة: ${days} أيام\n\nسيتم التفعيل قريباً.${FOOTER}`,{parse_mode:"Markdown",...kb.back("menu:premium")});
+  for (const aid of adminIds) { try { await bot.telegram.sendMessage(aid,`طلب اشتراك:\nID: ${uid}\n@${un}\nالمدة: ${days} أيام`, kb.adminGrantButtons(uid,days)); } catch {} }
+});
+bot.action(/^quick_grant:(\d+):(\d+)$/, async ctx => {
+  if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery("غير مسموح",{show_alert:true});
+  const u=db.grantPremium(ctx.match[1],parseInt(ctx.match[2]));
+  await eEdit(ctx,`✅  تم منح ${ctx.match[2]} يوم للمستخدم ${ctx.match[1]}\nينتهي: ${u.premiumExpiresAt.split("T")[0]}`);
+  try { await bot.telegram.sendMessage(ctx.match[1],`🎉  تم تفعيل اشتراكك لمدة ${ctx.match[2]} يوم!${FOOTER}`); } catch {}
+});
+bot.action("menu:admin", async ctx => {
+  if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery("غير مسموح",{show_alert:true});
+  await eEdit(ctx,"⚙️  لوحة الإدارة", kb.adminMenu(db.getAllUsers().length, db.getAllServers().length));
+});
+bot.action("admin:users", async ctx => {
+  if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery("غير مسموح",{show_alert:true});
+  const u=db.getAllUsers(); if (!u.length) return eEdit(ctx,"لا يوجد مستخدمون.",kb.back("menu:admin"));
+  await eEdit(ctx,`👥  المستخدمون (${u.length}):`, kb.usersList(u,0,parseInt(USERS_PER_PAGE)));
+});
+bot.action(/^users_page:(\d+)$/, async ctx => {
+  if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery("غير مسموح",{show_alert:true});
+  const u=db.getAllUsers(); await eEdit(ctx,`👥  المستخدمون (${u.length}):`, kb.usersList(u,parseInt(ctx.match[1]),parseInt(USERS_PER_PAGE)));
+});
+bot.action(/^user_view:(\d+)$/, async ctx => {
+  if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery("غير مسموح",{show_alert:true});
+  const tid=ctx.match[1], u=db.getUser(tid), srv=db.getActiveServersByUser(tid), p=db.isPremiumActive(tid), b=db.isBanned(tid);
+  await eEdit(ctx, `👤  ${tid}${u.username?` (@${u.username})`:""}\n💎  ${p?`✅ حتى ${u.premiumExpiresAt.split("T")[0]}`:"❌"}\n🚫  ${b?"محظور":"غير محظور"}\n🖥️  السيرفرات: ${srv.length}`, kb.userManage(tid,p,b));
+});
+bot.action(/^user_servers:(\d+)$/, async ctx => {
+  if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery("غير مسموح",{show_alert:true});
+  const l=db.getActiveServersByUser(ctx.match[1]); if (!l.length) return ctx.answerCbQuery("لا يوجد سيرفرات",{show_alert:true});
+  await eEdit(ctx,`🖥️  سيرفرات ${ctx.match[1]}:`, kb.serversList(l,true,`user_view:${ctx.match[1]}`));
+});
+bot.action(/^admin_server:(.+)$/, async ctx => {
+  if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery("غير مسموح",{show_alert:true});
+  const r=db.getServer(ctx.match[1]); if (!r) return ctx.answerCbQuery("غير موجود",{show_alert:true});
+  await eEdit(ctx, card(r,true), {parse_mode:"Markdown",...kb.serverDetail(r.id,r.protocol,true,true)});
+});
+bot.action(/^grant_menu:(\d+)$/, async ctx => { if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery("غير مسموح",{show_alert:true}); await eEdit(ctx,`منح بريميوم للمستخدم ${ctx.match[1]}:`, kb.grantDurations(ctx.match[1])); });
+bot.action(/^do_grant:(\d+):(\d+)$/, async ctx => {
+  if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery("غير مسموح",{show_alert:true});
+  const u=db.grantPremium(ctx.match[1],parseInt(ctx.match[2]));
+  await eEdit(ctx,`✅  تم منح ${ctx.match[2]} يوم للمستخدم ${ctx.match[1]}\nينتهي: ${u.premiumExpiresAt.split("T")[0]}`, kb.back(`user_view:${ctx.match[1]}`));
+  try { await bot.telegram.sendMessage(ctx.match[1],`🎉  تم تفعيل اشتراكك لمدة ${ctx.match[2]} يوم!${FOOTER}`); } catch {}
+});
+bot.action(/^revoke_premium:(\d+)$/, async ctx => {
+  if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery("غير مسموح",{show_alert:true});
+  db.revokePremium(ctx.match[1]);
+  await eEdit(ctx,`✅  تم إلغاء البريميوم للمستخدم ${ctx.match[1]}`, kb.back(`user_view:${ctx.match[1]}`));
+  try { await bot.telegram.sendMessage(ctx.match[1],`⚠️  تم إلغاء اشتراكك المميز.${FOOTER}`); } catch {}
+});
+bot.action(/^ban:(\d+)$/, async ctx => {
+  if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery("غير مسموح",{show_alert:true});
+  db.banUser(ctx.match[1]); await eEdit(ctx,`🚫  تم حظر ${ctx.match[1]}`, kb.back(`user_view:${ctx.match[1]}`));
+});
+bot.action(/^unban:(\d+)$/, async ctx => {
+  if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery("غير مسموح",{show_alert:true});
+  db.unbanUser(ctx.match[1]); await eEdit(ctx,`✅  تم رفع الحظر عن ${ctx.match[1]}`, kb.back(`user_view:${ctx.match[1]}`));
+});
+bot.action("admin:all_servers", async ctx => {
+  if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery("غير مسموح",{show_alert:true});
+  const l=db.getAllServers(); if (!l.length) return eEdit(ctx,"لا توجد سيرفرات.",kb.back("menu:admin"));
+  await eEdit(ctx,`📋  كل السيرفرات (${l.length}):`, kb.serversList(l,true,"menu:admin"));
+});
+bot.action("admin:nuke", async ctx => {
+  if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery("غير مسموح",{show_alert:true});
+  await eEdit(ctx,`⚠️  هل أنت متأكد؟ سيتم حذف كل السيرفرات (${db.getAllServers().length}) نهائياً.`, kb.confirmNuke());
+});
+bot.action("confirm_nuke", async ctx => {
+  if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery("غير مسموح",{show_alert:true});
+  const l=db.getAllServers(); let ok=0,fail=0;
+  await ctx.editMessageText(`🗑️  جارٍ حذف ${l.length} سيرفر...`);
+  for (const s of l) { try { await doDeprovision(s); ok++; } catch { db.removeServer(s.id); fail++; } }
+  await ctx.editMessageText(`✅  تم حذف ${ok} سيرفر.${fail?`\n⚠️  فشل ${fail}.`:""}`, kb.back("menu:admin"));
+});
+bot.action("admin:stats", async ctx => {
+  if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery("غير مسموح",{show_alert:true});
+  const sv=db.getAllServers(), us=db.getAllUsers(), p=us.filter(u=>db.isPremiumActive(u.telegramUserId)).length, b=us.filter(u=>db.isBanned(u.telegramUserId)).length;
+  const bp=sv.reduce((a,s)=>{a[s.protocol]=(a[s.protocol]||0)+1;return a;},{});
+  await eEdit(ctx,`📊  الإحصائيات\n\n👥  المستخدمون: ${us.length}\n💎  المميزون: ${p}\n🚫  المحظورون: ${b}\n\n🖥️  السيرفرات (${sv.length}):\n🟣  VLESS: ${bp.vless||0}\n🔵  VMess: ${bp.vmess||0}\n🟢  SSH: ${bp.ssh||0}`, kb.back("menu:admin"));
+});
+
+bot.on("text", async ctx => {
+  const s=sessions.get(ctx.from.id); if (!s) return;
+  if (s.step==="ssh_username") { const u=clean(ctx.message.text); if (u.length<3) return ctx.reply("اسم قصير جدًا (3 أحرف):"); s.username=u; s.step="ssh_password"; return ctx.reply("🔑  كلمة المرور (6 أحرف على الأقل):"); }
+  if (s.step==="ssh_password") { const p=clean(ctx.message.text); if (p.length<6) return ctx.reply("كلمة مرور قصيرة (6 أحرف):"); s.password=p; s.step="confirm"; return ctx.reply(`تأكيد SSH:\nUser: ${s.username}\nPass: ${s.password}`, kb.confirmCreate("ssh")); }
+  if (s.step==="xray_remark") { s.remark=ctx.message.text.trim().slice(0,32); s.step="confirm"; return ctx.reply(`تأكيد ${s.protocol.toUpperCase()}:\nالاسم: ${s.remark}`, kb.confirmCreate(s.protocol)); }
+  if (s.step==="edit_ssh_username") { const u=clean(ctx.message.text); if (u.length<3) return ctx.reply("اسم قصير (3 أحرف):"); s.username=u; s.step="edit_ssh_password"; return ctx.reply("🔑  كلمة المرور الجديدة (6 أحرف):"); }
+  if (s.step==="edit_ssh_password") { const p=clean(ctx.message.text); if (p.length<6) return ctx.reply("كلمة مرور قصيرة (6 أحرف):"); s.password=p; s.step="confirm_edit"; return ctx.reply(`تأكيد التعديل:\nUser: ${s.username}\nPass: ${s.password}\n⚠️  الاتصالات ستنقطع فور التغيير.`, kb.confirmEditSsh(s.serverId)); }
+});
+
+bot.action(/^confirm_create:(ssh|vless|vmess)$/, async ctx => {
+  const proto=ctx.match[1], s=sessions.get(ctx.from.id);
+  if (!s) return ctx.answerCbQuery("انتهت الجلسة",{show_alert:true});
+  const c=canCreate(ctx.from.id); if (!c.ok) { sessions.delete(ctx.from.id); return ctx.answerCbQuery(c.reason,{show_alert:true}); }
+  await ctx.editMessageText("جارٍ الإنشاء... ⏳");
   try {
-    const { address } = await dns.lookup(hostname, { family: 4 });
-    return address;
-  } catch (err) {
-    logger.error(`DNS lookup failed for ${hostname}:`, err.message);
-    return hostname;
-  }
-}
-
-// ✅ تحسين معالجة الأخطاء
-async function provisionSsh(telegramUserId, username, password) {
-  if (!sshManager) throw new Error("❌ خدمة SSH غير مُعدة من طرف المشرف");
-
-  const existing = db
-    .getAllServers()
-    .find((s) => s.protocol === "ssh" && s.status === "active" && s.username === username);
-  if (existing) throw new Error("❌ اسم المستخدم هذا محجوز فعلاً");
-
-  try {
-    await sshManager.createUser(username, password);
-  } catch (err) {
-    throw new Error(`❌ خطأ في إنشاء حساب SSH: ${err.message}`);
-  }
-
-  const ip = await resolveIp(SSH_PUBLIC_HOST);
-  const days = computeTtlDays(telegramUserId);
-  const record = {
-    id: shortId(),
-    telegramUserId,
-    protocol: "ssh",
-    connectHost: ip,
-    port: SSH_PUBLIC_PORT,
-    username,
-    password,
-    createdAt: new Date().toISOString(),
-    expiresAt: expiresAtFromDays(days),
-    status: "active",
-  };
-  db.addServer(record);
-  logger.info(`SSH server created: ${record.id} for user ${telegramUserId}`);
-  return record;
-}
-
-// ✅ تحسين معالجة الأخطاء
-async function provisionXray(telegramUserId, protocol, remark) {
-  if (!xrayManager) throw new Error(`❌ خدمة ${protocol.toUpperCase()} غير مُعدة من طرف المشرف`);
-
-  const domain = protocol === "vless" ? XRAY_VLESS_PUBLIC_HOST : XRAY_VMESS_PUBLIC_HOST;
-  if (!domain) throw new Error(`❌ دومين ${protocol.toUpperCase()} غير مُعد من طرف المشرف`);
-
-  const uuid = randomUUID();
-  const finalRemark = `${remark} | @${ADMIN_CONTACT_USERNAME}`.slice(0, 48);
-  
-  try {
-    await xrayManager.createClient(protocol, uuid, finalRemark);
-  } catch (err) {
-    throw new Error(`❌ خطأ في إنشاء ${protocol.toUpperCase()}: ${err.message}`);
-  }
-
-  const ip = await resolveIp(domain);
-  const days = computeTtlDays(telegramUserId);
-  const record = {
-    id: shortId(),
-    telegramUserId,
-    protocol,
-    connectHost: ip,
-    sniHost: domain,
-    port: 443,
-    uuid,
-    wsPath: protocol === "vless" ? "/vless" : "/vmess",
-    remark: finalRemark,
-    createdAt: new Date().toISOString(),
-    expiresAt: expiresAtFromDays(days),
-    status: "active",
-  };
-  db.addServer(record);
-  logger.info(`${protocol.toUpperCase()} server created: ${record.id} for user ${telegramUserId}`);
-  return record;
-}
-
-async function deprovision(record) {
-  try {
-    if (record.protocol === "ssh") {
-      if (sshManager) await sshManager.deleteUser(record.username);
-    } else {
-      if (xrayManager) await xrayManager.deleteClient(record.protocol, record.uuid);
-    }
-    db.removeServer(record.id);
-    logger.info(`Server ${record.id} deprovisioned successfully`);
-  } catch (err) {
-    logger.error(`Failed to deprovision server ${record.id}:`, err.message);
-    throw err;
-  }
-}
-
-function formatXrayLink(record) {
-  const { protocol, uuid, connectHost, sniHost, port, wsPath, remark } = record;
-  if (protocol === "vless") {
-    return `vless://${uuid}@${connectHost}:${port}?encryption=none&security=tls&sni=${sniHost}&type=ws&host=${sniHost}&path=${encodeURIComponent(wsPath)}#${encodeURIComponent(remark)}`;
-  }
-  const vmessObj = {
-    v: "2",
-    ps: remark,
-    add: connectHost,
-    port: String(port),
-    id: uuid,
-    aid: "0",
-    net: "ws",
-    type: "none",
-    host: sniHost,
-    path: wsPath,
-    tls: "tls",
-    sni: sniHost,
-  };
-  return `vmess://${Buffer.from(JSON.stringify(vmessObj)).toString("base64")}`;
-}
-
-function formatServerDetail(record) {
-  const expires = record.expiresAt.split("T")[0];
-  const remaining = daysUntil(record.expiresAt);
-  
-  if (record.protocol === "ssh") {
-    return (
-      `${kb.protocolIcon("ssh")} **SSH - #${record.id}**\n\n` +
-      `🔹 المضيف: \`${record.connectHost}\`\n` +
-      `🔹 المنفذ: \`${record.port}\`\n` +
-      `🔹 المستخدم: \`${record.username}\`\n` +
-      `🔹 كلمة المرور: \`${record.password}\`\n\n` +
-      `⏰ ينتهي: ${expires} (${remaining} أيام متبقية)`
-    );
-  }
-  return (
-    `${kb.protocolIcon(record.protocol)} **${record.protocol.toUpperCase()} - #${record.id}**\n\n` +
-    "```\n" + formatXrayLink(record) + "\n```\n\n" +
-    `⏰ ينتهي: ${expires} (${remaining} أيام متبقية)`
-  );
-}
-
-// ✅ معالج البدء المحسّن
-bot.start(async (ctx) => {
-  const user = db.getUser(ctx.from.id);
-  logger.info(`User started: ${ctx.from.id} (@${ctx.from.username})`);
-  
-  const { text, entities } = withPremiumEmoji("👋 مرحباً بك في البوت!");
-  const status = db.isPremiumActive(ctx.from.id) ? "✅ برميوم" : "🆓 مجاني";
-  
-  await ctx.reply(
-    `${text}\n\n📊 حالتك: ${status}\n\nاختر من الخيارات أدناه:${BRAND_FOOTER}`,
-    { entities, parse_mode: "Markdown", ...kb.mainMenu(isAdmin(ctx.from.id)) }
-  );
-});
-
-bot.action("menu:main", async (ctx) => {
-  sessions.delete(ctx.from.id);
-  const { text, entities } = withPremiumEmoji("القائمة الرئيسية");
-  await ctx.editMessageText(
-    `${text}${BRAND_FOOTER}`,
-    { entities, parse_mode: "Markdown", ...kb.mainMenu(isAdmin(ctx.from.id)) }
-  );
-});
-
-bot.action("menu:new", async (ctx) => {
-  const check = canCreateServer(ctx.from.id);
-  if (!check.ok) {
-    return ctx.answerCbQuery(check.reason, { show_alert: true });
-  }
-  await ctx.editMessageText("🖥️ **اختر البروتوكول:**", { 
-    parse_mode: "Markdown",
-    ...kb.protocolMenu() 
-  });
-});
-
-bot.action("new:ssh", async (ctx) => {
-  sessions.set(ctx.from.id, { step: "ssh_username" });
-  await ctx.editMessageText(
-    "📝 أرسل اسم المستخدم (أحرف وأرقام إنجليزية، بدون مسافات):"
-  );
-});
-
-bot.action(["new:vless", "new:vmess"], async (ctx) => {
-  const protocol = ctx.match[0].split(":")[1];
-  sessions.set(ctx.from.id, { step: "xray_remark", protocol });
-  await ctx.editMessageText(
-    `💬 أرسل اسمًا مميزًا للسيرفر (مثال: My ${protocol.toUpperCase()}):`
-  );
-});
-
-bot.on("text", async (ctx) => {
-  const session = sessions.get(ctx.from.id);
-  if (!session) return;
-
-  try {
-    if (session.step === "ssh_username") {
-      const username = sanitizeHandle(ctx.message.text);
-      if (!validateInput.username(username)) {
-        return ctx.reply("❌ اسم مستخدم غير صالح. استخدم أحرف وأرقام فقط (3-32 حرف)");
-      }
-      session.username = username;
-      session.step = "ssh_password";
-      return ctx.reply("🔐 الآن أرسل كلمة المرور (6 أحرف على الأقل):");
-    }
-
-    if (session.step === "ssh_password") {
-      const password = ctx.message.text;
-      if (!validateInput.password(password)) {
-        return ctx.reply("❌ كلمة مرور ضعيفة. استخدم 6 أحرف على الأقل");
-      }
-      session.password = password;
-      session.step = "confirm";
-      return ctx.reply(
-        `✅ **تأكيد إنشاء SSH:**\n\n` +
-        `👤 المستخدم: \`${session.username}\`\n` +
-        `🔐 كلمة المرور: \`${session.password}\``,
-        { parse_mode: "Markdown", ...kb.confirmMenu("ssh") }
-      );
-    }
-
-    if (session.step === "xray_remark") {
-      const remark = ctx.message.text.trim().slice(0, 32);
-      if (!validateInput.remark(remark)) {
-        return ctx.reply("❌ الاسم غير صالح. استخدم 3-32 حرف");
-      }
-      session.remark = remark;
-      session.step = "confirm";
-      return ctx.reply(
-        `✅ **تأكيد إنشاء ${session.protocol.toUpperCase()}:**\n\n` +
-        `📝 الاسم: ${session.remark}`,
-        { parse_mode: "Markdown", ...kb.confirmMenu(session.protocol) }
-      );
-    }
-  } catch (err) {
-    logger.error("Text handler error:", err);
-    await ctx.reply(`❌ حدث خطأ: ${err.message}`, kb.backButton());
-  }
-});
-
-bot.action(/^confirm:(ssh|vless|vmess)$/, async (ctx) => {
-  const protocol = ctx.match[1];
-  const session = sessions.get(ctx.from.id);
-  if (!session) {
-    return ctx.answerCbQuery("⏱️ انتهت الجلسة. ابدأ من جديد", { show_alert: true });
-  }
-
-  const check = canCreateServer(ctx.from.id);
-  if (!check.ok) {
+    const r=proto==="ssh" ? await doSsh(ctx.from.id,s.username,s.password) : await doXray(ctx.from.id,proto,s.remark);
     sessions.delete(ctx.from.id);
-    return ctx.answerCbQuery(check.reason, { show_alert: true });
-  }
-
-  await ctx.editMessageText("⏳ جارٍ الإنشاء...");
-  try {
-    let record;
-    if (protocol === "ssh") {
-      record = await provisionSsh(ctx.from.id, session.username, session.password);
-    } else {
-      record = await provisionXray(ctx.from.id, protocol, session.remark);
-    }
-    sessions.delete(ctx.from.id);
-    const { text, entities } = withPremiumEmoji("✅ تم الإنشاء بنجاح!");
-    await ctx.reply(
-      `${text}\n\n${formatServerDetail(record)}${BRAND_FOOTER}`,
-      { parse_mode: "Markdown", entities, ...kb.serverDetailMenu(record.id) }
-    );
-  } catch (err) {
-    logger.error("Server creation error:", err);
-    await ctx.reply(`❌ خطأ: ${err.message}`, kb.backButton());
-  }
+    const ce=isAdmin(ctx.from.id)||db.isPremiumActive(String(ctx.from.id));
+    const {text,entities}=withEmojiWrap("تم إنشاء سيرفرك بنجاح");
+    await ctx.reply(`${text}\n\n${card(r)}${FOOTER}`,{parse_mode:"Markdown",entities,...kb.serverDetail(r.id,r.protocol,ce,false)});
+  } catch(e) { sessions.delete(ctx.from.id); await ctx.reply(`❌  خطأ: ${e.message}`, kb.back("menu:main")); }
 });
 
-bot.action("menu:my_servers", async (ctx) => {
-  const servers = db.getActiveServersByUser(ctx.from.id);
-  if (servers.length === 0) {
-    return ctx.editMessageText(
-      "📭 لا تملك أي سيرفرات حالياً.\n\n🖥️ اضغط على \"إنشاء سيرفر\" لتبدأ",
-      kb.backButton()
-    );
-  }
-  const { text, entities } = withPremiumEmoji(`سيرفراتك (${servers.length})`);
-  await ctx.editMessageText(
-    `${text}${BRAND_FOOTER}`,
-    { entities, parse_mode: "Markdown", ...kb.myServersMenu(servers) }
-  );
+bot.action(/^confirm_edit_ssh:(.+)$/, async ctx => {
+  const s=sessions.get(ctx.from.id); if (!s) return ctx.answerCbQuery("انتهت الجلسة",{show_alert:true});
+  const r=db.getServer(ctx.match[1]); if (!r) return ctx.answerCbQuery("غير موجود",{show_alert:true});
+  await ctx.editMessageText("جارٍ التعديل... ⏳");
+  try { const u=await reproSsh(r,s.username,s.password); sessions.delete(ctx.from.id); const {text,entities}=withEmojiWrap("تم التعديل بنجاح"); await ctx.reply(`${text}\n\n${card(u)}${FOOTER}`,{parse_mode:"Markdown",entities,...kb.serverDetail(u.id,"ssh",true,false)}); }
+  catch(e) { sessions.delete(ctx.from.id); await ctx.reply(`❌  ${e.message}`, kb.back("menu:my_servers")); }
 });
 
-bot.action(/^server:(.+)$/, async (ctx) => {
-  const record = db.getServer(ctx.match[1]);
-  if (!record) return ctx.answerCbQuery("❌ السيرفر غير موجود", { show_alert: true });
-  await ctx.editMessageText(
-    formatServerDetail(record) + BRAND_FOOTER,
-    { parse_mode: "Markdown", ...kb.serverDetailMenu(record.id) }
-  );
-});
-
-bot.action(/^delete:(.+)$/, async (ctx) => {
-  const record = db.getServer(ctx.match[1]);
-  if (!record || record.telegramUserId !== ctx.from.id) {
-    return ctx.answerCbQuery("❌ غير مسموح", { show_alert: true });
-  }
-  await ctx.editMessageText("⏳ جارٍ الحذف...");
-  try {
-    await deprovision(record);
-    await ctx.editMessageText("🗑️ ✅ تم حذف السيرفر بنجاح", kb.backButton());
-  } catch (err) {
-    logger.error("Server deletion error:", err);
-    await ctx.answerCbQuery(`❌ خطأ: ${err.message}`, { show_alert: true });
-  }
-});
-
-// ✅ تحسين نظام البريميوم
-bot.action("menu:premium", async (ctx) => {
-  const user = db.getUser(ctx.from.id);
-  const isPremium = db.isPremiumActive(ctx.from.id);
-  
-  if (isPremium) {
-    const remaining = daysUntil(user.premiumExpiresAt);
-    const message = `💎 **نظام البريميوم**\n\n✅ اشتراكك مفعّل\n⏰ متبقي: ${remaining} أيام\n📅 ينتهي: ${user.premiumExpiresAt.split("T")[0]}`;
-    await ctx.editMessageText(message, { parse_mode: "Markdown", ...kb.backButton() });
-  } else {
-    const { text, entities } = withPremiumEmoji("💎 نظام البريميوم");
-    await ctx.editMessageText(
-      `${text}\n\n🆓 أنت حالياً على الخطة المجانية\n\n⭐ **مميزات البريميوم:**\n• إنشاء حتى ${MAX_SERVERS_PREMIUM} سيرفرات\n• دعم أولوي\n• وقت أطول للسيرفرات\n\n📲 اختر مدة الاشتراك:`,
-      { entities, parse_mode: "Markdown", ...kb.premiumMenu() }
-    );
-  }
-});
-
-bot.action(/^premium:(3|7|30)$/, async (ctx) => {
-  const days = ctx.match[1];
-  const { text, entities } = withPremiumEmoji("تم إرسال الطلب");
-  
-  await ctx.editMessageText(
-    `${text}\n\n📝 للتفعيل تواصل مع:\n@${ADMIN_CONTACT_USERNAME}\n\n🆔 معرفك: \`${ctx.from.id}\`\n📅 المدة المطلوبة: ${days} أيام${BRAND_FOOTER}`,
-    { parse_mode: "Markdown", ...kb.backButton() }
-  );
-
-  for (const adminId of adminIds) {
-    try {
-      await bot.telegram.sendMessage(
-        adminId,
-        `🔔 **طلب اشتراك جديد**\n\n` +
-        `👤 المستخدم: ${ctx.from.id}\n` +
-        `📱 اليوزرنيم: @${ctx.from.username || "-"}\n` +
-        `📅 المدة: ${days} أيام\n\n` +
-        `⚡ للتفعيل:\n/grant ${ctx.from.id} ${days}`,
-        { parse_mode: "Markdown" }
-      );
-    } catch (err) {
-      logger.error(`Failed to notify admin ${adminId}:`, err.message);
-    }
-  }
-});
-
-bot.command("grant", async (ctx) => {
-  if (!isAdmin(ctx.from.id)) return ctx.reply("❌ ليس لديك الصلاحيات");
-  
-  const parts = ctx.message.text.split(" ").filter(Boolean);
-  const targetId = parts[1];
-  const days = parseInt(parts[2], 10);
-  
-  if (!targetId || !days || days <= 0) {
-    return ctx.reply("❌ الاستخدام: /grant <telegram_id> <days>\n\nمثال: /grant 123456789 30");
-  }
-
-  try {
-    const user = db.grantPremium(targetId, days);
-    await ctx.reply(`✅ **تم التفعيل بنجاح**\n\n👤 المستخدم: ${targetId}\n⏰ ينتهي: ${user.premiumExpiresAt.split("T")[0]}`, { parse_mode: "Markdown" });
-    
-    try {
-      await bot.telegram.sendMessage(
-        targetId,
-        `🎉 **مبروك!**\n\nتم تفعيل اشتراك البريميوم لمدة ${days} يوم! 🎊\n\n✨ الآن يمكنك الاستمتاع بجميع المميزات${BRAND_FOOTER}`,
-        { parse_mode: "Markdown" }
-      );
-    } catch (_) {}
-  } catch (err) {
-    logger.error("Grant premium error:", err);
-    await ctx.reply(`❌ خطأ: ${err.message}`);
-  }
-});
-
-// ✅ لوحة التحكم الإدارية المحسّنة
-bot.action("menu:admin", async (ctx) => {
-  if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery("❌ غير مسموح", { show_alert: true });
-  const { text, entities } = withPremiumEmoji("⚙️ لوحة التحكم");
-  await ctx.editMessageText(
-    `${text}${BRAND_FOOTER}`,
-    { entities, parse_mode: "Markdown", ...kb.adminMenu() }
-  );
-});
-
-bot.action("admin:servers", async (ctx) => {
-  if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery("❌ غير مسموح", { show_alert: true });
-  const servers = db.getAllServers();
-  if (servers.length === 0) {
-    return ctx.editMessageText("📭 لا توجد سيرفرات", kb.backButton());
-  }
-  const rows = servers.map((s) => [
-    {
-      text: `${kb.protocolIcon(s.protocol)} #${s.id} | 👤 ${s.telegramUserId}`,
-      callback_data: `admin_view:${s.id}`,
-    },
-  ]);
-  rows.push([{ text: "⬅️ عودة", callback_data: "menu:admin" }]);
-  const { text, entities } = withPremiumEmoji(`جميع السيرفرات (${servers.length})`);
-  await ctx.editMessageText(
-    `${text}${BRAND_FOOTER}`,
-    { entities, parse_mode: "Markdown", reply_markup: { inline_keyboard: rows } }
-  );
-});
-
-bot.action(/^admin_view:(.+)$/, async (ctx) => {
-  if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery("❌ غير مسموح", { show_alert: true });
-  const record = db.getServer(ctx.match[1]);
-  if (!record) return ctx.answerCbQuery("❌ غير موجود", { show_alert: true });
-  await ctx.editMessageText(
-    `${formatServerDetail(record)}\n\n👤 المالك: \`${record.telegramUserId}\`${BRAND_FOOTER}`,
-    { parse_mode: "Markdown", ...kb.adminServerDetailMenu(record.id) }
-  );
-});
-
-bot.action(/^admin_delete:(.+)$/, async (ctx) => {
-  if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery("❌ غير مسموح", { show_alert: true });
-  const record = db.getServer(ctx.match[1]);
-  if (!record) return ctx.answerCbQuery("❌ غير موجود", { show_alert: true });
-  
-  await ctx.editMessageText("⏳ جارٍ الحذف...");
-  try {
-    await deprovision(record);
-    await ctx.editMessageText("🗑️ ✅ تم حذف السيرفر بنجاح", kb.backButton());
-  } catch (err) {
-    logger.error("Admin delete error:", err);
-    await ctx.answerCbQuery(`❌ خطأ: ${err.message}`, { show_alert: true });
-  }
-});
-
-// ✅ تنظيف تلقائي محسّن
 cron.schedule("0 3 * * *", async () => {
-  logger.info("Starting expiry cleanup...");
-  const expired = db.getExpiredServers();
-  
-  for (const server of expired) {
-    try {
-      await deprovision(server);
-      logger.info(`Expired server deleted: ${server.id}`);
-      
-      try {
-        await bot.telegram.sendMessage(
-          server.telegramUserId,
-          `⌛ **انتهت الصلاحية**\n\nللأسف انتهت صلاحية سيرفرك #${server.id} وتم حذفه تلقائياً.\n\n🔄 يمكنك إنشاء سيرفر جديد من القائمة الرئيسية${BRAND_FOOTER}`,
-          { parse_mode: "Markdown" }
-        );
-      } catch (_) {}
-    } catch (err) {
-      logger.error(`Failed to delete expired server ${server.id}:`, err.message);
-    }
+  for (const s of db.getExpiredServers()) {
+    try { await doDeprovision(s); try { await bot.telegram.sendMessage(s.telegramUserId,`⌛  انتهت صلاحية سيرفرك #${s.id} (${s.protocol}).${FOOTER}`); } catch {} }
+    catch(e) { console.error(`expire ${s.id}:`,e.message); }
   }
-  
-  logger.info(`Cleanup completed: ${expired.length} servers removed`);
-});
-
-// ✅ معالجة الأخطاء العامة
-bot.catch((err) => {
-  logger.error("Bot error:", err);
 });
 
 bot.launch();
-logger.info("✅ Bot started successfully - v2.0");
-
-process.once("SIGINT", () => {
-  logger.info("Bot stopping (SIGINT)...");
-  bot.stop("SIGINT");
-});
-process.once("SIGTERM", () => {
-  logger.info("Bot stopping (SIGTERM)...");
-  bot.stop("SIGTERM");
-});
+console.log("Bot started.");
+process.once("SIGINT", ()=>bot.stop("SIGINT"));
+process.once("SIGTERM",()=>bot.stop("SIGTERM"));
