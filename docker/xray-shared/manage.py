@@ -34,8 +34,8 @@ def build_config(clients):
         "log":{"loglevel":"warning"},
         "inbounds":[
             {"listen":"127.0.0.1","port":8083,"protocol":"dokodemo-door","settings":{"address":"127.0.0.1"},"tag":"api"},
-            {"port":8080,"listen":"0.0.0.0","protocol":"vless","settings":{"clients":vless,"decryption":"none"},"streamSettings":{"network":"ws","wsSettings":{"path":"/vless"}}},
-            {"port":8081,"listen":"0.0.0.0","protocol":"vmess","settings":{"clients":vmess},"streamSettings":{"network":"ws","wsSettings":{"path":"/vmess"}}},
+            {"port":18080,"listen":"0.0.0.0","protocol":"vless","settings":{"clients":vless,"decryption":"none"},"streamSettings":{"network":"ws","wsSettings":{"path":"/vless"}}},
+            {"port":18081,"listen":"0.0.0.0","protocol":"vmess","settings":{"clients":vmess},"streamSettings":{"network":"ws","wsSettings":{"path":"/vmess"}}},
         ],
         "outbounds":[{"protocol":"freedom","settings":{}},{"protocol":"blackhole","tag":"blocked"}],
         "routing":{"rules":[{"type":"field","inboundTag":["api"],"outboundTag":"api"},{"type":"field","ip":["geoip:private"],"outboundTag":"blocked"}]},
