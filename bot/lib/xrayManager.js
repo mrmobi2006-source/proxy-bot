@@ -1,73 +1,33 @@
-const axios = require("axios");
-
 class XrayManagerClient {
   constructor(internalHost, apiSecret) {
-    if (!internalHost || !apiSecret) {
-      throw new Error("XrayManagerClient requires internalHost and apiSecret");
-    }
-    this.baseUrl = `http://${internalHost}:8082`;
-    this.apiSecret = apiSecret;
-    this.axiosInstance = axios.create({
-      baseURL: this.baseUrl,
-      headers: {
-        "Content-Type": "application/json",
-        "X-API-Key": this.apiSecret,
-      },
-      timeout: 10000,
-    });
+    if (!internalHost || !apiSecret) throw new Error("XrayManagerClient: missing host or secret");
+    this.base   = `http://${internalHost}:8082`;
+    this.secret = apiSecret;
   }
 
-  async createClient(protocol, uuid, remark) {
-    try {
-      const payload = {
-        protocol: protocol.toLowerCase(),
-        uuid: uuid,
-        remark: remark,
-      };
+  async _req(method, path, body) {
+    const opts = { method, headers: { "Content-Type": "application/json", "X-API-Key": this.secret } };
+    if (body) opts.body = JSON.stringify(body);
+    const res  = await fetch(`${this.base}${path}`, opts);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || String(res.status));
+    return data;
+  }
 
-      const response = await this.axiosInstance.post("/clients", payload);
-      
-      if (response.status >= 200 && response.status < 300) {
-        return response.data;
-      }
-      throw new Error(`Failed with status ${response.status}`);
-    } catch (err) {
-      const errorMsg = err.response?.data?.error || err.message;
-      throw new Error(`❌ خطأ في إنشاء ${protocol.toUpperCase()}: ${errorMsg}`);
-    }
+  async createClient(protocol, uuid, remark, email) {
+    return this._req("POST", "/clients", { protocol, uuid, remark, email });
   }
 
   async deleteClient(protocol, uuid) {
-    try {
-      const response = await this.axiosInstance.delete(
-        `/clients/${protocol.toLowerCase()}/${uuid}`
-      );
-      
-      if (response.status >= 200 && response.status < 300) {
-        return response.data;
-      }
-      throw new Error(`Failed with status ${response.status}`);
-    } catch (err) {
-      const errorMsg = err.response?.data?.error || err.message;
-      throw new Error(`❌ خطأ في حذف ${protocol.toUpperCase()}: ${errorMsg}`);
-    }
+    return this._req("DELETE", `/clients/${protocol}/${uuid}`);
   }
 
-  async listClients() {
+  async getStats(email) {
     try {
-      const response = await this.axiosInstance.get("/clients");
-      return response.data;
-    } catch (err) {
-      throw new Error(`Failed to list clients: ${err.message}`);
-    }
-  }
-
-  async getHealth() {
-    try {
-      const response = await this.axiosInstance.get("/health");
-      return response.data;
-    } catch (err) {
-      throw new Error(`Xray service unreachable: ${err.message}`);
+      const data = await this._req("GET", `/stats/${encodeURIComponent(email)}`);
+      return { up: data.up || 0, down: data.down || 0 };
+    } catch {
+      return { up: 0, down: 0 };
     }
   }
 }
