@@ -127,7 +127,7 @@ bot.start(async ctx => {
   db.touchUser(String(ctx.from.id), ctx.from.username||null);
   const { text, entities } = withEmojiWrap("أهلاً بك في بوتنا الاحترافي");
   try { await ctx.reply(`${text}\n\nإدارة سيرفرات SSH · VLESS · VMess${FOOTER}`, { entities, ...kb.mainMenu(isAdmin(ctx.from.id)) }); }
-  catch { await ctx.reply(`أهلاً بك في بوتنا الاحترافي\n\nإدارة سيرفرات SSH · VLESS · VMess${FOOTER}`, kb.mainMenu(isAdmin(ctx.from.id))); }
+  catch { await ctx.reply(`أهـلاً بـك فـي بـوت سيـرفـرات MUSLIM\n\nإدارة سيرفرات SSH · VLESS · VMess${FOOTER}`, kb.mainMenu(isAdmin(ctx.from.id))); }
 });
 
 bot.command("grant", async ctx => {
@@ -150,7 +150,7 @@ bot.action(["new:vless","new:vmess"], async ctx => { const p=ctx.match[0].split(
 bot.action("menu:my_servers", async ctx => {
   const l=db.getActiveServersByUser(String(ctx.from.id));
   if (!l.length) return eEdit(ctx,"لا تملك أي سيرفرات نشطة.", kb.back("menu:main"));
-  await eEdit(ctx,"📋  سيرفراتك:", kb.serversList(l,false));
+  await eEdit(ctx,"📋  سيرفراتك:", kb.serversList(l, false, "menu:main"));
 });
 bot.action(/^server:(.+)$/, async ctx => {
   const r=db.getServer(ctx.match[1]); if (!r) return ctx.answerCbQuery("غير موجود",{show_alert:true});
