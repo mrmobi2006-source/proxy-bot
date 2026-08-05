@@ -1,11 +1,12 @@
 FROM teddysun/xray:latest
 
-RUN apk add --no-cache python3 || (apt-get update && apt-get install -y python3 && rm -rf /var/lib/apt/lists/*)
+RUN apk add --no-cache nginx python3
 
 WORKDIR /app
-COPY manage.py /app/manage.py
+COPY manage.py    /app/manage.py
+COPY nginx.conf   /etc/nginx/http.d/xray.conf
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-EXPOSE 8080 8081 8082
+EXPOSE 8080 8082
 ENTRYPOINT ["/entrypoint.sh"]
