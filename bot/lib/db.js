@@ -1,174 +1,98 @@
 const fs = require("fs");
 const path = require("path");
-const logger = require("./logger");
-
 const DB_PATH = path.join(__dirname, "..", "data", "db.json");
-const BACKUP_DIR = path.join(__dirname, "..", "data", "backups");
-
-// إنشاء المجلدات المطلوبة
-[path.dirname(DB_PATH), BACKUP_DIR].forEach((dir) => {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-    logger.info(`Created directory: ${dir}`);
-  }
-});
 
 function load() {
-  try {
-    if (!fs.existsSync(DB_PATH)) {
-      const initialData = { servers: [], users: [], stats: { totalServers: 0, totalUsers: 0 } };
-      fs.writeFileSync(DB_PATH, JSON.stringify(initialData, null, 2));
-      logger.info("Created new database file");
-      return initialData;
-    }
-    const data = JSON.parse(fs.readFileSync(DB_PATH, "utf-8"));
-    if (!data.users) data.users = [];
-    if (!data.stats) data.stats = { totalServers: 0, totalUsers: 0 };
-    return data;
-  } catch (err) {
-    logger.error("Database load error:", err.message);
-    throw err;
+  if (!fs.existsSync(DB_PATH)) {
+    fs.writeFileSync(DB_PATH, JSON.stringify({ servers: [], users: [] }, null, 2));
   }
+  const d = JSON.parse(fs.readFileSync(DB_PATH, "utf-8"));
+  if (!d.users) d.users = [];
+  return d;
 }
+function save(d) { fs.writeFileSync(DB_PATH, JSON.stringify(d, null, 2)); }
 
-function save(data) {
-  try {
-    // إنشاء نسخة احتياطية
-    if (fs.existsSync(DB_PATH)) {
-      const backup = path.join(
-        BACKUP_DIR,
-        `db-${new Date().toISOString().replace(/[:.]/g, "-")}.json`
-      );
-      fs.copyFileSync(DB_PATH, backup);
-      
-      // تنظيف النسخ القديمة (أكثر من 30 يوم)
-      const backups = fs.readdirSync(BACKUP_DIR).sort().reverse();
-      if (backups.length > 30) {
-        fs.unlinkSync(path.join(BACKUP_DIR, backups[30]));
-      }
-    }
-    
-    fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
-  } catch (err) {
-    logger.error("Database save error:", err.message);
-    throw err;
-  }
+function touchUser(telegramUserId, username) {
+  const d = load();
+  let u = d.users.find(x => x.telegramUserId === telegramUserId);
+  if (!u) {
+    u = { telegramUserId, username: username || null, premiumExpiresAt: null, banned: false, firstSeen: new Date().toISOString(), dailyCreated: {} };
+    d.users.push(u);
+  } else if (username) { u.username = username; }
+  save(d); return u;
 }
-
-function addServer(server) {
-  const data = load();
-  data.servers.push(server);
-  data.stats.totalServers = data.servers.length;
-  save(data);
-  logger.info(`Server added: ${server.id}`);
-  return server;
-}
-
-function getServersByUser(telegramUserId) {
-  const data = load();
-  return data.servers.filter((s) => s.telegramUserId === telegramUserId);
-}
-
-function getActiveServersByUser(telegramUserId) {
-  return getServersByUser(telegramUserId).filter((s) => s.status === "active");
-}
-
-function getAllServers() {
-  return load().servers;
-}
-
-function getServer(id) {
-  const data = load();
-  return data.servers.find((s) => s.id === id);
-}
-
-function removeServer(id) {
-  const data = load();
-  data.servers = data.servers.filter((s) => s.id !== id);
-  data.stats.totalServers = data.servers.length;
-  save(data);
-  logger.info(`Server removed: ${id}`);
-}
-
-function getExpiredServers() {
-  const data = load();
-  const now = Date.now();
-  return data.servers.filter((s) => new Date(s.expiresAt).getTime() < now && s.status === "active");
-}
-
+function getAllUsers() { return load().users; }
 function getUser(telegramUserId) {
-  const data = load();
-  let user = data.users.find((u) => u.telegramUserId === telegramUserId);
-  if (!user) {
-    user = {
-      telegramUserId,
-      premiumExpiresAt: null,
-      createdAt: new Date().toISOString(),
-      stats: { serversCreated: 0, totalSpent: 0 },
-    };
-    data.users.push(user);
-    data.stats.totalUsers = data.users.length;
-    save(data);
-    logger.info(`New user registered: ${telegramUserId}`);
-  }
-  return user;
+  const d = load();
+  let u = d.users.find(x => x.telegramUserId === telegramUserId);
+  if (!u) { u = { telegramUserId, username: null, premiumExpiresAt: null, banned: false, firstSeen: new Date().toISOString(), dailyCreated: {} }; d.users.push(u); save(d); }
+  return u;
 }
-
-function isPremiumActive(telegramUserId) {
-  const user = getUser(telegramUserId);
-  if (!user.premiumExpiresAt) return false;
-  return new Date(user.premiumExpiresAt).getTime() > Date.now();
+function isPremiumActive(id) {
+  const u = getUser(id);
+  return !!u.premiumExpiresAt && new Date(u.premiumExpiresAt).getTime() > Date.now();
 }
-
-function grantPremium(telegramUserId, days) {
-  const data = load();
-  let user = data.users.find((u) => u.telegramUserId === telegramUserId);
-  
+function grantPremium(id, days) {
+  const d = load();
+  let u = d.users.find(x => x.telegramUserId === id);
   const now = Date.now();
-  const base =
-    user && user.premiumExpiresAt && new Date(user.premiumExpiresAt).getTime() > now
-      ? new Date(user.premiumExpiresAt).getTime()
-      : now;
-  const newExpiry = new Date(base + days * 24 * 60 * 60 * 1000).toISOString();
-
-  if (user) {
-    user.premiumExpiresAt = newExpiry;
-  } else {
-    user = {
-      telegramUserId,
-      premiumExpiresAt: newExpiry,
-      createdAt: new Date().toISOString(),
-      stats: { serversCreated: 0, totalSpent: 0 },
-    };
-    data.users.push(user);
-    data.stats.totalUsers = data.users.length;
-  }
-  
-  save(data);
-  logger.info(`Premium granted to ${telegramUserId}: ${days} days until ${newExpiry}`);
-  return user;
+  const base = u?.premiumExpiresAt && new Date(u.premiumExpiresAt).getTime() > now
+    ? new Date(u.premiumExpiresAt).getTime() : now;
+  const exp = new Date(base + days * 86400000).toISOString();
+  if (u) { u.premiumExpiresAt = exp; }
+  else { u = { telegramUserId: id, username: null, premiumExpiresAt: exp, banned: false, firstSeen: new Date().toISOString(), dailyCreated: {} }; d.users.push(u); }
+  save(d); return u;
 }
-
-function getStats() {
-  const data = load();
-  return {
-    totalServers: data.servers.length,
-    totalUsers: data.users.length,
-    activeServers: data.servers.filter((s) => s.status === "active").length,
-    premiumUsers: data.users.filter((u) => u.premiumExpiresAt && new Date(u.premiumExpiresAt).getTime() > Date.now()).length,
-  };
+function revokePremium(id) {
+  const d = load();
+  const u = d.users.find(x => x.telegramUserId === id);
+  if (u) { u.premiumExpiresAt = null; save(d); }
 }
+function isBanned(id) { return !!getUser(id).banned; }
+function banUser(id) {
+  const d = load();
+  let u = d.users.find(x => x.telegramUserId === id);
+  if (!u) { u = { telegramUserId: id, username: null, premiumExpiresAt: null, banned: true, firstSeen: new Date().toISOString(), dailyCreated: {} }; d.users.push(u); }
+  else { u.banned = true; }
+  save(d);
+}
+function unbanUser(id) {
+  const d = load(); const u = d.users.find(x => x.telegramUserId === id);
+  if (u) { u.banned = false; save(d); }
+}
+function canCreateToday(id) {
+  const u = getUser(id);
+  const today = new Date().toISOString().split("T")[0];
+  return (u.dailyCreated?.[today] || 0) < 1;
+}
+function recordCreatedToday(id) {
+  const d = load(); const u = d.users.find(x => x.telegramUserId === id);
+  if (!u) return;
+  const today = new Date().toISOString().split("T")[0];
+  if (!u.dailyCreated) u.dailyCreated = {};
+  u.dailyCreated[today] = (u.dailyCreated[today] || 0) + 1;
+  save(d);
+}
+function addServer(s) { const d = load(); d.servers.push(s); save(d); return s; }
+function getAllServers() { return load().servers; }
+function getServer(id) { return load().servers.find(s => s.id === id); }
+function getServersByUser(uid) { return load().servers.filter(s => s.telegramUserId === uid); }
+function getActiveServersByUser(uid) { return getServersByUser(uid).filter(s => s.status === "active"); }
+function removeServer(id) { const d = load(); d.servers = d.servers.filter(s => s.id !== id); save(d); }
+function getExpiredServers() {
+  const n = Date.now();
+  return load().servers.filter(s => s.status === "active" && new Date(s.expiresAt).getTime() < n);
+}
+function updateServer(id, changes) {
+  const d = load(); const s = d.servers.find(x => x.id === id);
+  if (s) { Object.assign(s, changes); save(d); }
+  return getServer(id);
+}
+function updateServerUsage(id, dataUp, dataDown) { updateServer(id, { dataUp, dataDown }); }
 
 module.exports = {
-  addServer,
-  getServersByUser,
-  getActiveServersByUser,
-  getAllServers,
-  getServer,
-  removeServer,
-  getExpiredServers,
-  getUser,
-  isPremiumActive,
-  grantPremium,
-  getStats,
+  touchUser, getAllUsers, getUser, isPremiumActive, grantPremium, revokePremium,
+  isBanned, banUser, unbanUser, canCreateToday, recordCreatedToday,
+  addServer, getAllServers, getServer, getServersByUser, getActiveServersByUser,
+  removeServer, getExpiredServers, updateServer, updateServerUsage,
 };
