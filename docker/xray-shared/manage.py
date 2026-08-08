@@ -1,13 +1,4 @@
 #!/usr/bin/env python3
-"""
-Single-protocol Xray manager.
-نشرها مرتين في Railway:
-  مرة بـ XRAY_PROTOCOL=vless  ← TCP Proxy → :8080
-  مرة بـ XRAY_PROTOCOL=vmess  ← TCP Proxy → :8080
-
-manage.py API: :8082 (private network فقط)
-Stats gRPC:    :8083 (internal)
-"""
 
 import json
 import os
@@ -17,11 +8,11 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 API_SECRET = os.environ["API_SECRET"]
 PROTOCOL = os.environ.get("XRAY_PROTOCOL", "vless").lower()
+
 CLIENTS_FILE = "/app/clients.json"
 CONFIG_FILE = "/app/config.json"
-XRAY_STATS = "127.0.0.1:7300"
 
-assert PROTOCOL in ("vless", "vmess"), "XRAY_PROTOCOL must be vless or vmess"
+assert PROTOCOL in ("vless", "vmess")
 
 xray_proc = None
 lock = threading.Lock()
@@ -31,52 +22,34 @@ def load_clients():
     if not os.path.exists(CLIENTS_FILE):
         return []
 
-    with open(CLIENTS_FILE) as f:
-        return json.load(f)
-
-
-def save_clients(c):
-    with open(CLIENTS_FILE, "w") as f:
-        json.dump(c, f)
-
-
-def query_stat(name):
     try:
-        r = subprocess.run(
-            ["xray", "api", "stats", f"-s={XRAY_STATS}", f"-n={name}"],
-            capture_output=True,
-            text=True,
-            timeout=4
-        )
+        with open(CLIENTS_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return []
 
-        if r.returncode != 0:
-            return 0
 
-        return int(
-            json.loads(r.stdout).get("stat", {}).get("value") or 0
-        )
-
-    except:
-        return 0
+def save_clients(clients):
+    with open(CLIENTS_FILE, "w") as f:
+        json.dump(clients, f)
 
 
 def build_config(clients):
-    mine = [c for c in clients if c["protocol"] == PROTOCOL]
+    mine = [
+        c for c in clients
+        if c.get("protocol") == PROTOCOL
+    ]
 
     if PROTOCOL == "vless":
         xc = [
             {
                 "id": c["uuid"],
-                "email": c.get(
-                    "email",
-                    f"{c['uuid'][:8]}@xtt1x"
-                ),
                 "level": 0
             }
             for c in mine
         ]
 
-        inb = {
+        inbound = {
             "port": 8080,
             "listen": "0.0.0.0",
             "protocol": "vless",
@@ -86,6 +59,7 @@ def build_config(clients):
             },
             "streamSettings": {
                 "network": "ws",
+                "security": "none",
                 "wsSettings": {
                     "path": "/vless"
                 }
@@ -96,17 +70,13 @@ def build_config(clients):
         xc = [
             {
                 "id": c["uuid"],
-                "email": c.get(
-                    "email",
-                    f"{c['uuid'][:8]}@xtt1x"
-                ),
                 "level": 0,
                 "alterId": 0
             }
             for c in mine
         ]
 
-        inb = {
+        inbound = {
             "port": 8080,
             "listen": "0.0.0.0",
             "protocol": "vmess",
@@ -115,6 +85,7 @@ def build_config(clients):
             },
             "streamSettings": {
                 "network": "ws",
+                "security": "none",
                 "wsSettings": {
                     "path": "/vmess"
                 }
@@ -122,37 +93,11 @@ def build_config(clients):
         }
 
     return {
-        "stats": {},
-        "api": {
-            "tag": "api",
-            "services": ["StatsService"]
-        },
-        "policy": {
-            "levels": {
-                "0": {
-                    "statsUserUplink": True,
-                    "statsUserDownlink": True
-                }
-            },
-            "system": {
-                "statsInboundUplink": True,
-                "statsInboundDownlink": True
-            }
-        },
         "log": {
             "loglevel": "warning"
         },
         "inbounds": [
-            {
-                "listen": "127.0.0.1",
-                "port": 8083,
-                "protocol": "dokodemo-door",
-                "settings": {
-                    "address": "127.0.0.1"
-                },
-                "tag": "api"
-            },
-            inb
+            inbound
         ],
         "outbounds": [
             {
@@ -166,11 +111,6 @@ def build_config(clients):
         ],
         "routing": {
             "rules": [
-                {
-                    "type": "field",
-                    "inboundTag": ["api"],
-                    "outboundTag": "api"
-                },
                 {
                     "type": "field",
                     "ip": ["geoip:private"],
@@ -209,93 +149,62 @@ def restart_xray():
         )
 
 
-class H(BaseHTTPRequestHandler):
+class Handler(BaseHTTPRequestHandler):
 
-    def _auth(self):
+    def auth(self):
         return self.headers.get("X-API-Key") == API_SECRET
 
-    def _json(self, st, p):
-        self.send_response(st)
+    def response(self, status, data):
+        self.send_response(status)
         self.send_header(
             "Content-Type",
             "application/json"
         )
         self.end_headers()
-        self.wfile.write(json.dumps(p).encode())
-
-    def _body(self):
-        n = int(
-            self.headers.get(
-                "Content-Length",
-                0
-            )
+        self.wfile.write(
+            json.dumps(data).encode()
         )
 
-        return (
-            json.loads(self.rfile.read(n))
-            if n
-            else {}
+    def body(self):
+        length = int(
+            self.headers.get("Content-Length", 0)
         )
 
-    def do_GET(self):
-        if not self._auth():
-            return self._json(
-                401,
-                {"error": "unauthorized"}
-            )
+        if not length:
+            return {}
 
-        if self.path.startswith("/stats/"):
-            e = self.path[7:]
-
-            return self._json(
-                200,
-                {
-                    "up": query_stat(
-                        f"user>>>{e}>>>traffic>>>uplink"
-                    ),
-                    "down": query_stat(
-                        f"user>>>{e}>>>traffic>>>downlink"
-                    )
-                }
-            )
-
-        self._json(
-            404,
-            {"error": "not found"}
+        return json.loads(
+            self.rfile.read(length)
         )
 
     def do_POST(self):
-        if not self._auth():
-            return self._json(
+        if not self.auth():
+            return self.response(
                 401,
                 {"error": "unauthorized"}
             )
 
         if self.path != "/clients":
-            return self._json(
+            return self.response(
                 404,
                 {"error": "not found"}
             )
 
         try:
-            b = self._body()
+            data = self.body()
 
-            protocol = b["protocol"]
-            uuid = b["uuid"]
-            remark = b.get("remark", "")
-            email = b.get(
-                "email",
-                f"{uuid[:8]}@xtt1x"
-            )
+            protocol = data["protocol"]
+            uuid = data["uuid"]
+            remark = data.get("remark", "")
 
-        except:
-            return self._json(
+        except Exception:
+            return self.response(
                 400,
                 {"error": "invalid body"}
             )
 
         if protocol != PROTOCOL:
-            return self._json(
+            return self.response(
                 400,
                 {
                     "error":
@@ -305,56 +214,50 @@ class H(BaseHTTPRequestHandler):
 
         clients = load_clients()
 
-        clients.append(
-            {
-                "protocol": protocol,
-                "uuid": uuid,
-                "remark": remark,
-                "email": email
-            }
-        )
+        clients.append({
+            "protocol": protocol,
+            "uuid": uuid,
+            "remark": remark
+        })
 
         save_clients(clients)
         restart_xray()
 
-        self._json(
+        return self.response(
             200,
             {"status": "created"}
         )
 
     def do_DELETE(self):
-        if not self._auth():
-            return self._json(
+        if not self.auth():
+            return self.response(
                 401,
                 {"error": "unauthorized"}
             )
 
         parts = self.path.strip("/").split("/")
 
-        if (
-            len(parts) != 3
-            or parts[0] != "clients"
-        ):
-            return self._json(
+        if len(parts) != 3 or parts[0] != "clients":
+            return self.response(
                 404,
                 {"error": "not found"}
             )
 
-        protocol, uuid = parts[1], parts[2]
+        protocol = parts[1]
+        uuid = parts[2]
 
         clients = [
-            c
-            for c in load_clients()
+            c for c in load_clients()
             if not (
-                c["protocol"] == protocol
-                and c["uuid"] == uuid
+                c.get("protocol") == protocol
+                and c.get("uuid") == uuid
             )
         ]
 
         save_clients(clients)
         restart_xray()
 
-        self._json(
+        return self.response(
             200,
             {"status": "deleted"}
         )
@@ -378,5 +281,5 @@ if __name__ == "__main__":
 
     HTTPServer(
         ("0.0.0.0", 8082),
-        H
+        Handler
     ).serve_forever()
