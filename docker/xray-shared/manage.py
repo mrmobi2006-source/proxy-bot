@@ -1,13 +1,4 @@
 #!/usr/bin/env python3
-"""
-Single-protocol Xray manager.
-نشرها مرتين في Railway:
-  مرة بـ XRAY_PROTOCOL=vless  ← TCP Proxy → :8080
-  مرة بـ XRAY_PROTOCOL=vmess  ← TCP Proxy → :8080
-
-manage.py API: :8082 (private network فقط)
-Stats gRPC:    :8083 (internal)
-"""
 
 import json
 import os
@@ -17,11 +8,13 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 API_SECRET = os.environ["API_SECRET"]
 PROTOCOL = os.environ.get("XRAY_PROTOCOL", "vless").lower()
+
 CLIENTS_FILE = "/app/clients.json"
 CONFIG_FILE = "/app/config.json"
 XRAY_STATS = "127.0.0.1:8083"
 
-assert PROTOCOL in ("vless", "vmess"), "XRAY_PROTOCOL must be vless or vmess"
+assert PROTOCOL in ("vless", "vmess"), \
+    f"XRAY_PROTOCOL must be 'vless' or 'vmess', got '{PROTOCOL}'"
 
 xray_proc = None
 lock = threading.Lock()
@@ -35,9 +28,9 @@ def load_clients():
         return json.load(f)
 
 
-def save_clients(c):
+def save_clients(clients):
     with open(CLIENTS_FILE, "w") as f:
-        json.dump(c, f)
+        json.dump(clients, f)
 
 
 def query_stat(name):
@@ -56,12 +49,15 @@ def query_stat(name):
             json.loads(r.stdout).get("stat", {}).get("value") or 0
         )
 
-    except:
+    except Exception:
         return 0
 
 
 def build_config(clients):
-    mine = [c for c in clients if c["protocol"] == PROTOCOL]
+    mine = [
+        c for c in clients
+        if c["protocol"] == PROTOCOL
+    ]
 
     if PROTOCOL == "vless":
         xc = [
@@ -76,7 +72,7 @@ def build_config(clients):
             for c in mine
         ]
 
-        inb = {
+        inbound = {
             "port": 8080,
             "listen": "0.0.0.0",
             "protocol": "vless",
@@ -106,7 +102,7 @@ def build_config(clients):
             for c in mine
         ]
 
-        inb = {
+        inbound = {
             "port": 8080,
             "listen": "0.0.0.0",
             "protocol": "vmess",
@@ -123,10 +119,14 @@ def build_config(clients):
 
     return {
         "stats": {},
+
         "api": {
             "tag": "api",
-            "services": ["StatsService"]
+            "services": [
+                "StatsService"
+            ]
         },
+
         "policy": {
             "levels": {
                 "0": {
@@ -139,9 +139,11 @@ def build_config(clients):
                 "statsInboundDownlink": True
             }
         },
+
         "log": {
             "loglevel": "warning"
         },
+
         "inbounds": [
             {
                 "listen": "127.0.0.1",
@@ -152,8 +154,9 @@ def build_config(clients):
                 },
                 "tag": "api"
             },
-            inb
+            inbound
         ],
+
         "outbounds": [
             {
                 "protocol": "freedom",
@@ -164,16 +167,21 @@ def build_config(clients):
                 "tag": "blocked"
             }
         ],
+
         "routing": {
             "rules": [
                 {
                     "type": "field",
-                    "inboundTag": ["api"],
+                    "inboundTag": [
+                        "api"
+                    ],
                     "outboundTag": "api"
                 },
                 {
                     "type": "field",
-                    "ip": ["geoip:private"],
+                    "ip": [
+                        "geoip:private"
+                    ],
                     "outboundTag": "blocked"
                 }
             ]
@@ -188,7 +196,10 @@ def restart_xray():
         clients = load_clients()
 
         with open(CONFIG_FILE, "w") as f:
-            json.dump(build_config(clients), f)
+            json.dump(
+                build_config(clients),
+                f
+            )
 
         if xray_proc:
             xray_proc.terminate()
@@ -199,7 +210,12 @@ def restart_xray():
                 xray_proc.kill()
 
         xray_proc = subprocess.Popen(
-            ["xray", "run", "-c", CONFIG_FILE]
+            [
+                "xray",
+                "run",
+                "-c",
+                CONFIG_FILE
+            ]
         )
 
         print(
@@ -212,16 +228,21 @@ def restart_xray():
 class H(BaseHTTPRequestHandler):
 
     def _auth(self):
-        return self.headers.get("X-API-Key") == API_SECRET
+        return (
+            self.headers.get("X-API-Key")
+            == API_SECRET
+        )
 
-    def _json(self, st, p):
-        self.send_response(st)
+    def _json(self, status, payload):
+        self.send_response(status)
         self.send_header(
             "Content-Type",
             "application/json"
         )
         self.end_headers()
-        self.wfile.write(json.dumps(p).encode())
+        self.wfile.write(
+            json.dumps(payload).encode()
+        )
 
     def _body(self):
         n = int(
@@ -232,7 +253,9 @@ class H(BaseHTTPRequestHandler):
         )
 
         return (
-            json.loads(self.rfile.read(n))
+            json.loads(
+                self.rfile.read(n)
+            )
             if n
             else {}
         )
@@ -245,16 +268,16 @@ class H(BaseHTTPRequestHandler):
             )
 
         if self.path.startswith("/stats/"):
-            e = self.path[7:]
+            email = self.path[7:]
 
             return self._json(
                 200,
                 {
                     "up": query_stat(
-                        f"user>>>{e}>>>traffic>>>uplink"
+                        f"user>>>{email}>>>traffic>>>uplink"
                     ),
                     "down": query_stat(
-                        f"user>>>{e}>>>traffic>>>downlink"
+                        f"user>>>{email}>>>traffic>>>downlink"
                     )
                 }
             )
@@ -278,17 +301,17 @@ class H(BaseHTTPRequestHandler):
             )
 
         try:
-            b = self._body()
+            body = self._body()
 
-            protocol = b["protocol"]
-            uuid = b["uuid"]
-            remark = b.get("remark", "")
-            email = b.get(
+            protocol = body["protocol"]
+            uuid = body["uuid"]
+            remark = body.get("remark", "")
+            email = body.get(
                 "email",
                 f"{uuid[:8]}@xtt1x"
             )
 
-        except:
+        except Exception:
             return self._json(
                 400,
                 {"error": "invalid body"}
@@ -340,7 +363,8 @@ class H(BaseHTTPRequestHandler):
                 {"error": "not found"}
             )
 
-        protocol, uuid = parts[1], parts[2]
+        protocol = parts[1]
+        uuid = parts[2]
 
         clients = [
             c
