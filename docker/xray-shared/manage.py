@@ -19,7 +19,7 @@ API_SECRET = os.environ["API_SECRET"]
 PROTOCOL = os.environ.get("XRAY_PROTOCOL", "vless").lower()
 CLIENTS_FILE = "/app/clients.json"
 CONFIG_FILE = "/app/config.json"
-XRAY_STATS = "127.0.0.1:8083"
+XRAY_STATS = "127.0.0.1:7300"
 
 assert PROTOCOL in ("vless", "vmess"), "XRAY_PROTOCOL must be vless or vmess"
 
