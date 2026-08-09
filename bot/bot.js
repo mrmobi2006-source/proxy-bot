@@ -59,7 +59,7 @@ function canCreate(userId) {
   return { ok: true };
 }
 
-async function resolveIpForSsh(host) {
+async function resolveIp(host) {
   try { const { address } = await dns.lookup(host, { family: 4 }); return address; } catch { return host; }
 }
 
@@ -69,7 +69,7 @@ async function doSsh(userId, username, password) {
   if (!sshManager) throw new Error("SSH غير مُعد — تحقق من SSH_SHARED_*");
   if (db.getAllServers().find(s=>s.protocol==="ssh"&&s.status==="active"&&s.username===username)) throw new Error("اسم المستخدم محجوز");
   await sshManager.createUser(username, password);
-  const connectHost = await resolveIpForSsh(SSH_PUBLIC_HOST);
+  const connectHost = await resolveIp(SSH_PUBLIC_HOST);
   const days = ttlDays(userId);
   const record = { id: shortId(), telegramUserId: String(userId), protocol: "ssh", connectHost, port: SSH_PUBLIC_PORT, username, password, country: SERVER_COUNTRY, dataUp: 0, dataDown: 0, createdAt: new Date().toISOString(), expiresAt: expireIn(days), status: "active" };
   db.addServer(record); db.recordCreatedToday(String(userId)); return record;
@@ -83,8 +83,10 @@ async function doXray(userId, protocol, remark) {
   const uuid = randomUUID(); const id = shortId(); const email = `${id}@xtt1x`;
   const note = `${remark} | @${ADMIN_CONTACT_USERNAME}`.slice(0, 48);
   await mgr.createClient(protocol, uuid, note, email);
+  // Domain fronting: IP للاتصال الفعلي، الدومين يبقى فقط في SNI/Host
+  const connectHost = await resolveIp(domain);
   const days = ttlDays(userId);
-  const record = { id, telegramUserId: String(userId), protocol, domain, port: 443, uuid, email, wsPath: protocol==="vless"?"/vless":"/vmess", remark: note, country: SERVER_COUNTRY, dataUp: 0, dataDown: 0, createdAt: new Date().toISOString(), expiresAt: expireIn(days), status: "active" };
+  const record = { id, telegramUserId: String(userId), protocol, connectHost, sniHost: domain, port: 443, uuid, email, wsPath: protocol==="vless"?"/vless":"/vmess", remark: note, country: SERVER_COUNTRY, dataUp: 0, dataDown: 0, createdAt: new Date().toISOString(), expiresAt: expireIn(days), status: "active" };
   db.addServer(record); db.recordCreatedToday(String(userId)); return record;
 }
 
@@ -99,7 +101,7 @@ async function reproSsh(r, u, p) {
   if (db.getAllServers().find(s=>s.protocol==="ssh"&&s.status==="active"&&s.username===u&&s.id!==r.id)) throw new Error("اسم المستخدم محجوز");
   await sshManager.createUser(u, p);
   await sshManager.deleteUser(r.username).catch(()=>{});
-  const connectHost = await resolveIpForSsh(SSH_PUBLIC_HOST);
+  const connectHost = await resolveIp(SSH_PUBLIC_HOST);
   return db.updateServer(r.id, { connectHost, username: u, password: p });
 }
 
@@ -114,9 +116,9 @@ async function reproXray(r) {
 
 function xrayLink(r) {
   if (r.protocol === "vless") {
-    return `vless://${r.uuid}@${r.domain}:${r.port}?encryption=none&security=tls&sni=${r.domain}&type=ws&host=${r.domain}&path=${encodeURIComponent(r.wsPath)}#${encodeURIComponent(r.remark)}`;
+    return `vless://${r.uuid}@${r.connectHost}:${r.port}?encryption=none&security=tls&sni=${r.sniHost}&type=ws&host=${r.sniHost}&path=${encodeURIComponent(r.wsPath)}#${encodeURIComponent(r.remark)}`;
   }
-  const v = { v: "2", ps: r.remark, add: r.domain, port: String(r.port), id: r.uuid, aid: "0", net: "ws", type: "none", host: r.domain, path: r.wsPath, tls: "tls", sni: r.domain };
+  const v = { v: "2", ps: r.remark, add: r.connectHost, port: String(r.port), id: r.uuid, aid: "0", net: "ws", type: "none", host: r.sniHost, path: r.wsPath, tls: "tls", sni: r.sniHost };
   return `vmess://${Buffer.from(JSON.stringify(v)).toString("base64")}`;
 }
 
